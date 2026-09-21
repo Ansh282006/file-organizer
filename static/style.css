@@ -147,4 +147,11 @@ tr.renamed td.destination::after { content: " *"; }
 
 .actions { display: flex; gap: 10px; margin-top: 20px; }
 
+.last-run {
+  margin-top: 12px;
+  font-size: 13px;
+  color: var(--muted);
+  font-family: ui-monospace, Consolas, monospace;
+}
+
 .hidden { display: none !important; }

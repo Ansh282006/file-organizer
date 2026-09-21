@@ -1,4 +1,4 @@
-"""Core file-organizer logic: scan, plan, execute."""
+"""Core file-organizer logic: scan, plan, execute, undo."""
 
 from __future__ import annotations
 
@@ -135,10 +135,7 @@ def scan(folder: Path, rules: list[Rule] | None = None) -> Plan:
 # ---------- execution ----------
 
 def execute(plan: Plan) -> Path:
-    """
-    Actually move the files in `plan`. Writes a JSON log to logs/.
-    Returns the path of the log file.
-    """
+    """Move all files in plan. Write a JSON log. Return log path."""
     LOG_DIR.mkdir(exist_ok=True)
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     log_path = LOG_DIR / f"organize_{timestamp}.json"
@@ -170,6 +167,110 @@ def execute(plan: Plan) -> Path:
     }
     log_path.write_text(json.dumps(log, indent=2), encoding="utf-8")
     return log_path
+
+
+# ---------- logs ----------
+
+def list_logs() -> list[dict]:
+    """Return all organize logs, newest first."""
+    if not LOG_DIR.exists():
+        return []
+
+    logs = []
+    for f in sorted(LOG_DIR.glob("organize_*.json"), reverse=True):
+        try:
+            data = json.loads(f.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        logs.append({
+            "file": f.name,
+            "timestamp": data.get("timestamp", ""),
+            "folder": data.get("folder", ""),
+            "total": data.get("total", 0),
+            "undone": data.get("undone", False),
+        })
+    return logs
+
+
+def latest_undoable_log() -> Path | None:
+    """Return the newest log that hasn't been undone yet."""
+    for entry in list_logs():
+        if not entry["undone"]:
+            return LOG_DIR / entry["file"]
+    return None
+
+
+# ---------- undo ----------
+
+def undo(log_path: Path) -> dict:
+    """Reverse the moves in a log file. Mark the log as undone."""
+    log_path = Path(log_path)
+    if not log_path.exists():
+        raise FileNotFoundError(f"Log not found: {log_path}")
+
+    data = json.loads(log_path.read_text(encoding="utf-8"))
+
+    if data.get("undone"):
+        raise ValueError("This log has already been undone")
+
+    restored: list[dict] = []
+    errors: list[dict] = []
+
+    for move in reversed(data.get("moves", [])):
+        src = Path(move["destination"])
+        dst = Path(move["source"])
+
+        if not src.exists():
+            errors.append({
+                "source": str(src),
+                "error": "File no longer exists at destination",
+            })
+            continue
+
+        if dst.exists():
+            errors.append({
+                "source": str(src),
+                "error": f"Original path already occupied: {dst}",
+            })
+            continue
+
+        try:
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            src.rename(dst)
+            restored.append({"from": str(src), "to": str(dst)})
+        except Exception as e:
+            errors.append({
+                "source": str(src),
+                "error": f"{type(e).__name__}: {e}",
+            })
+
+    data["undone"] = True
+    data["undone_at"] = datetime.now().strftime("%Y%m%d_%H%M%S")
+    data["undo_result"] = {"restored": len(restored), "errors": errors}
+    log_path.write_text(json.dumps(data, indent=2), encoding="utf-8")
+
+    _prune_empty_dirs(data.get("folder"))
+
+    return {
+        "log_file": log_path.name,
+        "restored": len(restored),
+        "errors": errors,
+    }
+
+
+def _prune_empty_dirs(root: str | None) -> None:
+    """Remove empty subfolders inside the organized folder."""
+    if not root:
+        return
+    root_path = Path(root)
+    if not root_path.is_dir():
+        return
+    for sub in root_path.iterdir():
+        if sub.is_dir() and not any(sub.iterdir()):
+            try:
+                sub.rmdir()
+            except OSError:
+                pass
 
 
 # ---------- CLI preview ----------

@@ -7,7 +7,15 @@ from pathlib import Path
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.staticfiles import StaticFiles
 
-from organizer import execute, load_rules, scan, Plan
+from organizer import (
+    execute,
+    latest_undoable_log,
+    list_logs,
+    load_rules,
+    scan,
+    undo,
+    Plan,
+)
 
 app = FastAPI(title="File Organizer", version="0.1.0")
 
@@ -71,6 +79,34 @@ def api_organize(payload: dict):
         "log_file": log_path.name,
         "message": f"Moved {plan.total} file(s)",
     }
+
+
+@app.get("/api/logs")
+def api_logs():
+    return {"logs": list_logs()}
+
+
+@app.post("/api/undo")
+def api_undo(payload: dict | None = None):
+    log_name = (payload or {}).get("log_file")
+    if log_name:
+        log_path = Path(__file__).parent / "logs" / log_name
+    else:
+        log_path = latest_undoable_log()
+
+    if not log_path:
+        raise HTTPException(status_code=404, detail="No undoable log found")
+
+    try:
+        result = undo(log_path)
+    except FileNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"{type(e).__name__}: {e}")
+
+    return result
 
 
 def plan_to_json(plan: Plan) -> dict:

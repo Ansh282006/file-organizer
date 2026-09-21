@@ -1,7 +1,12 @@
 __pycache__/
 *.pyc
 .venv/
+venv/
 .pytest_cache/
 logs/*.json
+settings.yaml
 .DS_Store
+Thumbs.db
 test-folder/
+.idea/
+.vscode/

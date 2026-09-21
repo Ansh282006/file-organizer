@@ -34,12 +34,27 @@ const els = {
   historyEmpty:  $("#history-empty"),
   historyCount:  $("#history-count"),
   historyRefresh:$("#history-refresh"),
+  // settings
+  toggleSettings:   $("#toggle-settings"),
+  settingsBody:     $("#settings-body"),
+  setDefaultMode:   $("#set-default-mode"),
+  setDateFormat:    $("#set-date-format"),
+  skipNamesChips:   $("#skip-names-chips"),
+  skipPrefixesChips:$("#skip-prefixes-chips"),
+  newSkipName:      $("#new-skip-name"),
+  addSkipName:      $("#add-skip-name"),
+  newSkipPrefix:    $("#new-skip-prefix"),
+  addSkipPrefix:    $("#add-skip-prefix"),
+  settingsSaved:    $("#settings-saved"),
 };
 
 let latestUndoableLog = null;
 let rulesVisible = false;
+let settingsVisible = false;
 let currentMode = "extension";
 let watchPollTimer = null;
+let currentSettings = null;
+let dateFormatOptions = [];
 
 const MODE_HINTS = {
   extension: "Files go to folders like Images/, Documents/, Code/",
@@ -81,7 +96,7 @@ function setMode(mode) {
 
 els.modeBtns.forEach(btn => btn.addEventListener("click", () => setMode(btn.dataset.mode)));
 
-// ---------- logs (also refreshes history) ----------
+// ---------- logs + history ----------
 
 async function loadLogs() {
   try {
@@ -89,7 +104,6 @@ async function loadLogs() {
     const data = await res.json();
     const logs = data.logs || [];
 
-    // Latest undoable → powers the "Undo latest" button
     const undoable = logs.find(l => !l.undone);
     if (undoable) {
       latestUndoableLog = undoable.file;
@@ -107,10 +121,7 @@ async function loadLogs() {
   } catch {}
 }
 
-// ---------- history ----------
-
 function formatTimestamp(ts) {
-  // ts is "YYYYMMDD_HHMMSS"
   if (!ts || ts.length !== 15) return ts || "";
   const y = ts.slice(0,4), mo = ts.slice(4,6), d = ts.slice(6,8);
   const h = ts.slice(9,11), mi = ts.slice(11,13), s = ts.slice(13,15);
@@ -136,9 +147,7 @@ function renderHistory(logs) {
       <td class="mode-cell">${escapeHtml(log.mode || "extension")}</td>
       <td class="folder-cell" title="${escapeHtml(log.folder)}">${escapeHtml(log.folder)}</td>
       <td class="status-cell">
-        <span class="status-pill ${log.undone ? "done" : "active"}">
-          ${log.undone ? "UNDONE" : "ACTIVE"}
-        </span>
+        <span class="status-pill ${log.undone ? "done" : "active"}">${log.undone ? "UNDONE" : "ACTIVE"}</span>
       </td>
       <td class="actions-cell">
         ${log.undone
@@ -149,17 +158,13 @@ function renderHistory(logs) {
   `).join("");
 }
 
-// Delegated click for per-row Undo buttons
 els.historyBody.addEventListener("click", async (e) => {
   const btn = e.target.closest(".history-undo-btn");
   if (!btn) return;
-  const logFile = btn.dataset.log;
-  await undoLog(logFile);
+  await undoLog(btn.dataset.log);
 });
 
-els.historyRefresh.addEventListener("click", () => {
-  loadLogs();
-});
+els.historyRefresh.addEventListener("click", () => loadLogs());
 
 // ---------- scan ----------
 
@@ -185,8 +190,6 @@ async function scan() {
     els.scanBtn.textContent = "Scan";
   }
 }
-
-// ---------- organize ----------
 
 async function organize() {
   const path = els.folder.value.trim();
@@ -221,12 +224,8 @@ async function organize() {
   }
 }
 
-// ---------- undo (shared by latest + history rows) ----------
-
 async function undoLog(logFile) {
-  const confirmed = confirm(
-    `Undo this run?\n${logFile}\n\nAll moved files will be restored.`
-  );
+  const confirmed = confirm(`Undo this run?\n${logFile}\n\nAll moved files will be restored.`);
   if (!confirmed) return;
 
   hideStatus();
@@ -242,8 +241,7 @@ async function undoLog(logFile) {
     const errCount = (data.errors || []).length;
     const kind = errCount > 0 ? "error" : "success";
     showStatus(
-      `Undone: ${data.restored} file(s) restored` +
-      (errCount > 0 ? `, ${errCount} error(s)` : ""),
+      `Undone: ${data.restored} file(s) restored` + (errCount > 0 ? `, ${errCount} error(s)` : ""),
       kind
     );
     await scan();
@@ -372,6 +370,128 @@ function stopWatchPolling() {
 els.watchStartBtn.addEventListener("click", watchStart);
 els.watchStopBtn.addEventListener("click", watchStop);
 
+// ---------- settings ----------
+
+async function loadSettings() {
+  try {
+    const res = await fetch("/api/settings");
+    const data = await res.json();
+    currentSettings = data.settings;
+    dateFormatOptions = data.date_format_options || [];
+    renderSettings();
+  } catch {}
+}
+
+function renderSettings() {
+  if (!currentSettings) return;
+
+  els.setDefaultMode.value = currentSettings.default_mode || "extension";
+
+  // Date format dropdown
+  const currentFmt = currentSettings.date_format;
+  const known = dateFormatOptions.some(o => o.value === currentFmt);
+  els.setDateFormat.innerHTML = dateFormatOptions.map(o =>
+    `<option value="${escapeHtml(o.value)}" ${o.value === currentFmt ? "selected" : ""}>${escapeHtml(o.label)}</option>`
+  ).join("");
+  if (!known && currentFmt) {
+    // Add the current (custom) value so it shows up
+    els.setDateFormat.insertAdjacentHTML(
+      "beforeend",
+      `<option value="${escapeHtml(currentFmt)}" selected>${escapeHtml(currentFmt)} (custom)</option>`
+    );
+  }
+
+  // Skip names
+  renderChips(els.skipNamesChips, currentSettings.skip_names || [], "skip_names");
+  renderChips(els.skipPrefixesChips, currentSettings.skip_prefixes || [], "skip_prefixes");
+}
+
+function renderChips(container, values, field) {
+  container.innerHTML = values.map(v => `
+    <span class="skip-chip">
+      ${escapeHtml(v)}
+      <button data-field="${field}" data-value="${escapeHtml(v)}" title="Remove">×</button>
+    </span>
+  `).join("");
+}
+
+async function saveSettings(partial) {
+  try {
+    const res = await fetch("/api/settings", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(partial),
+    });
+    const data = await res.json();
+    if (!res.ok) { showStatus(data.detail || `Error ${res.status}`, "error"); return; }
+    currentSettings = data.settings;
+    renderSettings();
+    flashSaved();
+  } catch (err) {
+    showStatus(`Settings: ${err.message}`, "error");
+  }
+}
+
+let savedTimer = null;
+function flashSaved() {
+  els.settingsSaved.classList.remove("hidden");
+  if (savedTimer) clearTimeout(savedTimer);
+  savedTimer = setTimeout(() => els.settingsSaved.classList.add("hidden"), 1500);
+}
+
+els.setDefaultMode.addEventListener("change", () => {
+  saveSettings({ default_mode: els.setDefaultMode.value });
+});
+
+els.setDateFormat.addEventListener("change", () => {
+  saveSettings({ date_format: els.setDateFormat.value });
+});
+
+// Chip removal (delegated)
+els.settingsBody.addEventListener("click", async (e) => {
+  const btn = e.target.closest(".skip-chip button");
+  if (!btn) return;
+  const field = btn.dataset.field;
+  const value = btn.dataset.value;
+  const list = (currentSettings[field] || []).filter(v => v !== value);
+  await saveSettings({ [field]: list });
+});
+
+// Add skip name
+els.addSkipName.addEventListener("click", async () => {
+  const v = els.newSkipName.value.trim();
+  if (!v) return;
+  const list = [...(currentSettings.skip_names || [])];
+  if (!list.includes(v)) list.push(v);
+  els.newSkipName.value = "";
+  await saveSettings({ skip_names: list });
+});
+
+els.newSkipName.addEventListener("keydown", (e) => {
+  if (e.key === "Enter") els.addSkipName.click();
+});
+
+// Add skip prefix
+els.addSkipPrefix.addEventListener("click", async () => {
+  const v = els.newSkipPrefix.value.trim();
+  if (!v) return;
+  const list = [...(currentSettings.skip_prefixes || [])];
+  if (!list.includes(v)) list.push(v);
+  els.newSkipPrefix.value = "";
+  await saveSettings({ skip_prefixes: list });
+});
+
+els.newSkipPrefix.addEventListener("keydown", (e) => {
+  if (e.key === "Enter") els.addSkipPrefix.click();
+});
+
+els.toggleSettings.addEventListener("click", () => {
+  settingsVisible = !settingsVisible;
+  els.settingsBody.classList.toggle("hidden", !settingsVisible);
+  els.toggleSettings.textContent = settingsVisible ? "Hide" : "Show";
+  if (settingsVisible) loadSettings();
+});
+
 // ---------- rules editor ----------
 
 async function loadRules() {
@@ -495,11 +615,21 @@ els.undoBtn.addEventListener("click", undoLatest);
 els.clearBtn.addEventListener("click", clear);
 els.folder.addEventListener("keydown", (e) => { if (e.key === "Enter") scan(); });
 
-// Initial state
-setMode("extension");
-loadLogs();
-refreshWatch().then(() => {
-  fetch("/api/watch/status").then(r => r.json()).then(d => {
-    if (d.watching) startWatchPolling();
+// ---------- init ----------
+
+async function init() {
+  const s = await fetch("/api/settings").then(r => r.json()).catch(() => null);
+  const initialMode = s?.settings?.default_mode || "extension";
+  setMode(initialMode);
+  currentSettings = s?.settings || null;
+  dateFormatOptions = s?.date_format_options || [];
+
+  loadLogs();
+  refreshWatch().then(() => {
+    fetch("/api/watch/status").then(r => r.json()).then(d => {
+      if (d.watching) startWatchPolling();
+    });
   });
-});
+}
+
+init();

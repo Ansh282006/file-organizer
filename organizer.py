@@ -14,8 +14,13 @@ RULES_FILE = Path(__file__).parent / "rules.yaml"
 LOG_DIR = Path(__file__).parent / "logs"
 FALLBACK_CATEGORY = "Misc"
 
-SKIP_NAMES = {".DS_Store", "Thumbs.db", "desktop.ini"}
-SKIP_PREFIXES = (".",)
+DEFAULT_SKIP_NAMES = {".DS_Store", "Thumbs.db", "desktop.ini"}
+DEFAULT_SKIP_PREFIXES = (".",)
+DEFAULT_DATE_FORMAT = "%Y-%m"
+
+# Kept for backwards-compat with code that imports these directly
+SKIP_NAMES = DEFAULT_SKIP_NAMES
+SKIP_PREFIXES = DEFAULT_SKIP_PREFIXES
 
 MODE_EXTENSION = "extension"
 MODE_DATE = "date"
@@ -74,9 +79,9 @@ def category_for(suffix: str, rules: list[Rule]) -> str:
     return FALLBACK_CATEGORY
 
 
-def category_for_date(timestamp: float) -> str:
-    """Return the YYYY-MM folder name for a file's mtime."""
-    return datetime.fromtimestamp(timestamp).strftime("%Y-%m")
+def category_for_date(timestamp: float, date_format: str = DEFAULT_DATE_FORMAT) -> str:
+    """Return the folder name for a file's mtime, using the given strftime format."""
+    return datetime.fromtimestamp(timestamp).strftime(date_format)
 
 
 # ---------- rules: writing ----------
@@ -147,11 +152,17 @@ def remove_category(name: str) -> None:
 
 # ---------- helpers ----------
 
-def should_skip(path: Path) -> bool:
+def should_skip(
+    path: Path,
+    skip_names: set[str] | None = None,
+    skip_prefixes: tuple[str, ...] | None = None,
+) -> bool:
+    names = skip_names if skip_names is not None else DEFAULT_SKIP_NAMES
+    prefixes = skip_prefixes if skip_prefixes is not None else DEFAULT_SKIP_PREFIXES
     name = path.name
-    if name in SKIP_NAMES:
+    if name in names:
         return True
-    return any(name.startswith(p) for p in SKIP_PREFIXES)
+    return any(name.startswith(p) for p in prefixes)
 
 
 def _unique_name(dest: Path, taken: set[Path]) -> tuple[Path, bool]:
@@ -174,6 +185,9 @@ def scan(
     folder: Path,
     rules: list[Rule] | None = None,
     mode: str = MODE_EXTENSION,
+    date_format: str = DEFAULT_DATE_FORMAT,
+    skip_names: set[str] | None = None,
+    skip_prefixes: tuple[str, ...] | None = None,
 ) -> Plan:
     folder = Path(folder).expanduser().resolve()
     if not folder.is_dir():
@@ -189,7 +203,7 @@ def scan(
     for entry in sorted(folder.iterdir()):
         if entry.is_dir():
             continue
-        if should_skip(entry):
+        if should_skip(entry, skip_names, skip_prefixes):
             plan.skipped.append(entry)
             continue
 
@@ -199,11 +213,10 @@ def scan(
             except OSError:
                 plan.skipped.append(entry)
                 continue
-            category = category_for_date(mtime)
+            category = category_for_date(mtime, date_format)
         else:
             category = category_for(entry.suffix, rules)
 
-        # Already in the right target folder? Skip.
         if entry.parent.name == category:
             plan.skipped.append(entry)
             continue
@@ -266,7 +279,6 @@ def execute(plan: Plan) -> Path:
 # ---------- logs ----------
 
 def list_logs() -> list[dict]:
-    """Return all organize logs, newest first."""
     if not LOG_DIR.exists():
         return []
 
@@ -288,7 +300,6 @@ def list_logs() -> list[dict]:
 
 
 def latest_undoable_log() -> Path | None:
-    """Return the newest log that hasn't been undone yet."""
     for entry in list_logs():
         if not entry["undone"]:
             return LOG_DIR / entry["file"]
@@ -298,7 +309,6 @@ def latest_undoable_log() -> Path | None:
 # ---------- undo ----------
 
 def undo(log_path: Path) -> dict:
-    """Reverse the moves in a log file. Mark the log as undone."""
     log_path = Path(log_path)
     if not log_path.exists():
         raise FileNotFoundError(f"Log not found: {log_path}")
@@ -316,17 +326,11 @@ def undo(log_path: Path) -> dict:
         dst = Path(move["source"])
 
         if not src.exists():
-            errors.append({
-                "source": str(src),
-                "error": "File no longer exists at destination",
-            })
+            errors.append({"source": str(src), "error": "File no longer exists at destination"})
             continue
 
         if dst.exists():
-            errors.append({
-                "source": str(src),
-                "error": f"Original path already occupied: {dst}",
-            })
+            errors.append({"source": str(src), "error": f"Original path already occupied: {dst}"})
             continue
 
         try:
@@ -334,10 +338,7 @@ def undo(log_path: Path) -> dict:
             src.rename(dst)
             restored.append({"from": str(src), "to": str(dst)})
         except Exception as e:
-            errors.append({
-                "source": str(src),
-                "error": f"{type(e).__name__}: {e}",
-            })
+            errors.append({"source": str(src), "error": f"{type(e).__name__}: {e}"})
 
     data["undone"] = True
     data["undone_at"] = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -346,15 +347,10 @@ def undo(log_path: Path) -> dict:
 
     _prune_empty_dirs(data.get("folder"))
 
-    return {
-        "log_file": log_path.name,
-        "restored": len(restored),
-        "errors": errors,
-    }
+    return {"log_file": log_path.name, "restored": len(restored), "errors": errors}
 
 
 def _prune_empty_dirs(root: str | None) -> None:
-    """Remove empty subfolders inside the organized folder."""
     if not root:
         return
     root_path = Path(root)

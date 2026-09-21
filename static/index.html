@@ -43,12 +43,7 @@
     <section id="preview" class="preview hidden">
       <table>
         <thead>
-          <tr>
-            <th>File</th>
-            <th></th>
-            <th>Destination</th>
-            <th>Group</th>
-          </tr>
+          <tr><th>File</th><th></th><th>Destination</th><th>Group</th></tr>
         </thead>
         <tbody id="preview-body"></tbody>
       </table>
@@ -67,9 +62,7 @@
         <h2>Watch folder</h2>
         <span id="watch-badge" class="watch-badge off">OFF</span>
       </div>
-      <p class="watch-hint">
-        Auto-organize files as they land in the folder above. Uses the current sort mode.
-      </p>
+      <p class="watch-hint">Auto-organize files as they land in the folder above. Uses the current sort mode.</p>
       <div class="watch-controls">
         <button id="watch-start-btn" class="primary">Start watching</button>
         <button id="watch-stop-btn" class="secondary" disabled>Stop</button>
@@ -94,16 +87,61 @@
       <table id="history-table" class="history-table hidden">
         <thead>
           <tr>
-            <th>When</th>
-            <th>Files</th>
-            <th>Mode</th>
-            <th>Folder</th>
-            <th>Status</th>
-            <th></th>
+            <th>When</th><th>Files</th><th>Mode</th><th>Folder</th><th>Status</th><th></th>
           </tr>
         </thead>
         <tbody id="history-body"></tbody>
       </table>
+    </section>
+
+    <section class="settings-panel">
+      <div class="settings-header">
+        <h2>Settings</h2>
+        <button id="toggle-settings" class="secondary">Show</button>
+      </div>
+
+      <div id="settings-body" class="settings-body hidden">
+        <p class="settings-hint">Persisted to <code>settings.yaml</code>. Applied on next scan.</p>
+
+        <div class="settings-row">
+          <label class="settings-label">Default mode</label>
+          <select id="set-default-mode" class="settings-input">
+            <option value="extension">Extension</option>
+            <option value="date">Date</option>
+          </select>
+        </div>
+
+        <div class="settings-row">
+          <label class="settings-label">Date format</label>
+          <select id="set-date-format" class="settings-input">
+            <!-- populated by JS from /api/settings -->
+          </select>
+        </div>
+
+        <div class="settings-row">
+          <label class="settings-label">Skip names</label>
+          <div class="settings-tags">
+            <div id="skip-names-chips" class="skip-chips"></div>
+            <div class="skip-add">
+              <input id="new-skip-name" type="text" class="ext-input" placeholder="+ name" spellcheck="false" />
+              <button id="add-skip-name" class="secondary tiny">Add</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="settings-row">
+          <label class="settings-label">Skip prefixes</label>
+          <div class="settings-tags">
+            <div id="skip-prefixes-chips" class="skip-chips"></div>
+            <div class="skip-add">
+              <input id="new-skip-prefix" type="text" class="ext-input" placeholder="+ prefix" spellcheck="false" />
+              <button id="add-skip-prefix" class="secondary tiny">Add</button>
+            </div>
+          </div>
+        </div>
+
+        <p id="settings-saved" class="settings-saved hidden">Saved.</p>
+      </div>
     </section>
 
     <section id="rules-panel" class="rules-panel">

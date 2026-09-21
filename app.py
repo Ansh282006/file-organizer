@@ -22,12 +22,31 @@ from organizer import (
     undo,
     Plan,
 )
+from settings import (
+    DATE_FORMAT_OPTIONS,
+    Settings,
+    load_settings,
+    update_settings,
+)
 from watcher import WatchManager
 
-app = FastAPI(title="File Organizer", version="0.2.0")
+app = FastAPI(title="File Organizer", version="0.3.0")
 
 STATIC_DIR = Path(__file__).parent / "static"
 watch_manager = WatchManager()
+
+
+def _scan_with_settings(path: str, mode: str | None = None) -> Plan:
+    """Scan using current settings defaults."""
+    s = load_settings()
+    effective_mode = mode or s.default_mode
+    return scan(
+        Path(path),
+        mode=effective_mode,
+        date_format=s.date_format,
+        skip_names=set(s.skip_names),
+        skip_prefixes=tuple(s.skip_prefixes),
+    )
 
 
 # ---------- API ----------
@@ -40,13 +59,13 @@ def api_health():
 @app.get("/api/scan")
 def api_scan(
     path: str = Query(..., description="Absolute or ~-relative folder path"),
-    mode: str = Query(MODE_EXTENSION, description="'extension' or 'date'"),
+    mode: str | None = Query(None, description="'extension' or 'date' (defaults to settings)"),
 ):
-    if mode not in VALID_MODES:
+    if mode is not None and mode not in VALID_MODES:
         raise HTTPException(status_code=400, detail=f"Invalid mode: {mode}")
 
     try:
-        plan = scan(Path(path), mode=mode)
+        plan = _scan_with_settings(path, mode)
     except NotADirectoryError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except ValueError as e:
@@ -65,12 +84,12 @@ def api_organize(payload: dict):
     if not path:
         raise HTTPException(status_code=400, detail="Missing 'path' in request body")
 
-    mode = payload.get("mode", MODE_EXTENSION)
-    if mode not in VALID_MODES:
+    mode = payload.get("mode")
+    if mode is not None and mode not in VALID_MODES:
         raise HTTPException(status_code=400, detail=f"Invalid mode: {mode}")
 
     try:
-        plan = scan(Path(path), mode=mode)
+        plan = _scan_with_settings(path, mode)
     except NotADirectoryError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except ValueError as e:
@@ -79,12 +98,7 @@ def api_organize(payload: dict):
         raise HTTPException(status_code=403, detail=f"Permission denied: {e}")
 
     if plan.total == 0:
-        return {
-            "moved": 0,
-            "errors": [],
-            "log_file": None,
-            "message": "Nothing to organize",
-        }
+        return {"moved": 0, "errors": [], "log_file": None, "message": "Nothing to organize"}
 
     log_path = execute(plan)
 
@@ -126,6 +140,28 @@ def api_undo(payload: dict | None = None):
     return result
 
 
+# ---------- settings endpoints ----------
+
+@app.get("/api/settings")
+def api_get_settings():
+    s = load_settings()
+    return {
+        "settings": s.to_dict(),
+        "date_format_options": DATE_FORMAT_OPTIONS,
+    }
+
+
+@app.post("/api/settings")
+def api_update_settings(payload: dict):
+    if not isinstance(payload, dict):
+        raise HTTPException(status_code=400, detail="Body must be a JSON object")
+    try:
+        updated = update_settings(payload)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return {"ok": True, "settings": updated.to_dict()}
+
+
 # ---------- watch endpoints ----------
 
 @app.get("/api/watch/status")
@@ -138,7 +174,7 @@ def api_watch_start(payload: dict):
     path = payload.get("path")
     if not path:
         raise HTTPException(status_code=400, detail="Missing 'path'")
-    mode = payload.get("mode", MODE_EXTENSION)
+    mode = payload.get("mode") or load_settings().default_mode
     try:
         return watch_manager.start(Path(path), mode=mode)
     except NotADirectoryError as e:

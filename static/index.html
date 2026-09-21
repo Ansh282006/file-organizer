@@ -100,12 +100,14 @@
         <span id="dupes-badge" class="dupes-badge">—</span>
       </div>
       <p class="dupes-hint">
-        Finds byte-identical files in the folder above. Quarantined copies go to
-        <code>_duplicates/</code> — nothing is deleted.
+        Finds byte-identical files in the folder above.
+        <strong>Quarantine</strong> moves extras into <code>_duplicates/</code> (undoable).
+        <strong>Send to trash</strong> moves them to your OS Recycle Bin / Trash (restore from there).
       </p>
       <div class="dupes-controls">
         <button id="find-dupes-btn" class="primary">Find duplicates</button>
         <button id="quarantine-dupes-btn" class="secondary" disabled>Quarantine duplicates</button>
+        <button id="trash-dupes-btn" class="danger" disabled>Send to trash</button>
       </div>
       <p id="dupes-status" class="dupes-status hidden"></p>
       <div id="dupes-groups" class="dupes-groups hidden"></div>

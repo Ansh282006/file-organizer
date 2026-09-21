@@ -35,9 +35,10 @@ from scheduler import (
 )
 from settings import DATE_FORMAT_OPTIONS, load_settings, update_settings
 from thumbnails import generate_thumbnail, is_image
+from trash import is_supported as trash_supported, trash_many
 from watcher import WatchManager
 
-app = FastAPI(title="File Organizer", version="0.7.0")
+app = FastAPI(title="File Organizer", version="0.8.0")
 
 STATIC_DIR = Path(__file__).parent / "static"
 watch_manager = WatchManager()
@@ -70,7 +71,11 @@ def _scan_with_settings(path: str, mode: str | None = None) -> Plan:
 
 @app.get("/api/health")
 def api_health():
-    return {"status": "ok", "scheduler_running": scheduler_service.running}
+    return {
+        "status": "ok",
+        "scheduler_running": scheduler_service.running,
+        "trash_supported": trash_supported(),
+    }
 
 
 @app.get("/api/scan")
@@ -165,19 +170,41 @@ def api_undo(payload: dict | None = None):
     return result
 
 
+# ---------- trash ----------
+
+@app.get("/api/trash/status")
+def api_trash_status():
+    return {"supported": trash_supported()}
+
+
+@app.post("/api/trash")
+def api_trash(payload: dict):
+    """Send a list of file paths to the OS recycle bin."""
+    if not trash_supported():
+        raise HTTPException(
+            status_code=501,
+            detail="OS trash not available (install send2trash)",
+        )
+    paths = payload.get("paths")
+    if not isinstance(paths, list) or not paths:
+        raise HTTPException(status_code=400, detail="Missing 'paths' list")
+
+    result = trash_many([Path(p) for p in paths])
+    return result
+
+
 # ---------- config bundle ----------
 
 @app.get("/api/config/export")
 def api_config_export():
-    """Download the config bundle as a JSON file."""
     bundle = export_bundle()
     import json
     body = json.dumps(bundle, indent=2)
-    filename = f"file-organizer-config-{bundle['exported_at'].replace(':', '').replace(' ', '_').replace('-', '')}.json"
+    ts = bundle["exported_at"].replace(":", "").replace(" ", "_").replace("-", "")
     return Response(
         content=body,
         media_type="application/json",
-        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        headers={"Content-Disposition": f'attachment; filename="file-organizer-config-{ts}.json"'},
     )
 
 
@@ -240,6 +267,46 @@ def api_duplicates_quarantine(payload: dict):
         "log_file": log_path.name,
         "message": f"Quarantined {plan.total} duplicate(s) into _duplicates/",
     }
+
+
+@app.post("/api/duplicates/trash")
+def api_duplicates_trash(payload: dict):
+    """Send duplicate extras to OS recycle bin instead of _duplicates/."""
+    if not trash_supported():
+        raise HTTPException(
+            status_code=501,
+            detail="OS trash not available (install send2trash)",
+        )
+
+    path = payload.get("path")
+    if not path:
+        raise HTTPException(status_code=400, detail="Missing 'path' in request body")
+
+    s = load_settings()
+    try:
+        result = find_duplicates(Path(path), skip_names=set(s.skip_names), skip_prefixes=tuple(s.skip_prefixes))
+    except NotADirectoryError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"{type(e).__name__}: {e}")
+
+    if result["total_groups"] == 0:
+        return {"trashed": 0, "failed": 0, "message": "No duplicates found"}
+
+    to_trash: list[Path] = []
+    for group in result["groups"]:
+        for f in group["files"][1:]:
+            to_trash.append(Path(f["path"]))
+
+    if not to_trash:
+        return {"trashed": 0, "failed": 0, "message": "Nothing to trash"}
+
+    trash_result = trash_many(to_trash)
+    trash_result["message"] = (
+        f"Sent {trash_result['trashed']} duplicate(s) to OS trash"
+        + (f" ({trash_result['failed']} failed)" if trash_result.get("failed") else "")
+    )
+    return trash_result
 
 
 # ---------- schedules ----------

@@ -301,13 +301,14 @@ tr.renamed td.destination::after { content: " *"; }
 }
 
 .dupes-hint { color: var(--muted); font-size: 13px; margin-bottom: 14px; }
+.dupes-hint strong { color: var(--text); }
 
 .dupes-hint code {
   background: var(--surface-2); padding: 2px 6px;
   border-radius: 4px; font-size: 12px;
 }
 
-.dupes-controls { display: flex; gap: 10px; margin-bottom: 12px; }
+.dupes-controls { display: flex; gap: 10px; margin-bottom: 12px; flex-wrap: wrap; }
 
 .dupes-status {
   font-size: 13px; color: var(--muted);
@@ -592,7 +593,6 @@ tr.renamed td.destination::after { content: " *"; }
 }
 
 .backup-radio input { cursor: pointer; }
-
 .backup-radio span { color: var(--text); }
 
 /* Rules panel */

@@ -37,6 +37,7 @@ const els = {
   // duplicates
   findDupesBtn:  $("#find-dupes-btn"),
   quarantineBtn: $("#quarantine-dupes-btn"),
+  trashDupesBtn: $("#trash-dupes-btn"),
   dupesBadge:    $("#dupes-badge"),
   dupesStatus:   $("#dupes-status"),
   dupesGroups:   $("#dupes-groups"),
@@ -74,6 +75,7 @@ let watchPollTimer = null;
 let currentSettings = null;
 let dateFormatOptions = [];
 let lastDupeResult = null;
+let trashSupported = false;
 
 const MODE_HINTS = {
   extension: "Files go to folders like Images/, Documents/, Code/",
@@ -421,6 +423,7 @@ function renderDuplicates(result) {
     els.dupesStatus.classList.remove("hidden");
     els.dupesGroups.classList.add("hidden");
     els.quarantineBtn.disabled = true;
+    els.trashDupesBtn.disabled = true;
     return;
   }
 
@@ -430,6 +433,7 @@ function renderDuplicates(result) {
     `Scanned ${result.total_files} file(s) — ${result.total_groups} duplicate group(s), ${formatBytes(result.wasted_bytes)} wasted.`;
   els.dupesStatus.classList.remove("hidden");
   els.quarantineBtn.disabled = false;
+  els.trashDupesBtn.disabled = !trashSupported;
 
   const html = result.groups.map(g => `
     <div class="dupe-group">
@@ -459,6 +463,7 @@ async function findDuplicates() {
   els.dupesStatus.classList.add("hidden");
   els.dupesGroups.classList.add("hidden");
   els.quarantineBtn.disabled = true;
+  els.trashDupesBtn.disabled = true;
 
   try {
     const res = await fetch(`/api/duplicates?path=${encodeURIComponent(path)}`);
@@ -509,8 +514,44 @@ async function quarantineDuplicates() {
   }
 }
 
+async function trashDuplicates() {
+  const path = els.folder.value.trim();
+  if (!path || !lastDupeResult || lastDupeResult.total_groups === 0) return;
+
+  const moved = lastDupeResult.groups.reduce((n, g) => n + (g.files.length - 1), 0);
+  const confirmed = confirm(
+    `Send ${moved} duplicate file(s) to the OS Recycle Bin / Trash?\n\n` +
+    `The newest copy in each group is kept.\n` +
+    `Files can be restored from your system Recycle Bin or Trash — but not from this app.`
+  );
+  if (!confirmed) return;
+
+  els.trashDupesBtn.disabled = true;
+  els.trashDupesBtn.textContent = "Sending...";
+  hideStatus();
+
+  try {
+    const res = await fetch("/api/duplicates/trash", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ path }),
+    });
+    const data = await res.json();
+    if (!res.ok) { showStatus(data.detail || `Error ${res.status}`, "error"); return; }
+
+    showStatus(data.message, "success");
+    await findDuplicates();
+  } catch (err) {
+    showStatus(`Network error: ${err.message}`, "error");
+  } finally {
+    els.trashDupesBtn.disabled = false;
+    els.trashDupesBtn.textContent = "Send to trash";
+  }
+}
+
 els.findDupesBtn.addEventListener("click", findDuplicates);
 els.quarantineBtn.addEventListener("click", quarantineDuplicates);
+els.trashDupesBtn.addEventListener("click", trashDuplicates);
 
 // ---------- schedules ----------
 
@@ -755,7 +796,6 @@ function getImportStrategy() {
 
 async function exportConfig() {
   try {
-    // Trigger a download — the server sets Content-Disposition: attachment
     window.location.href = "/api/config/export";
     showStatus("Downloading config bundle...", "info");
   } catch (err) {
@@ -800,7 +840,6 @@ async function importConfigFile(file) {
       "success"
     );
 
-    // Refresh everything that depends on config
     await loadSettings();
     await loadRules();
     await loadSchedules();
@@ -835,7 +874,7 @@ els.exportConfigBtn.addEventListener("click", exportConfig);
 els.importFileInput.addEventListener("change", async (e) => {
   const file = e.target.files && e.target.files[0];
   await importConfigFile(file);
-  e.target.value = ""; // allow re-selecting the same file
+  e.target.value = "";
 });
 
 els.resetConfigBtn.addEventListener("click", resetConfig);
@@ -971,6 +1010,14 @@ async function init() {
   setMode(initialMode);
   currentSettings = s?.settings || null;
   dateFormatOptions = s?.date_format_options || [];
+
+  // Check trash support
+  try {
+    const t = await fetch("/api/trash/status").then(r => r.json());
+    trashSupported = t.supported === true;
+  } catch {
+    trashSupported = false;
+  }
 
   loadLogs();
   loadSchedules();

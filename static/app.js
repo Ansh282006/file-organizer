@@ -278,7 +278,7 @@ function renderPlan(plan) {
 
   if (plan.items.length === 0) {
     els.previewBody.innerHTML = `
-      <tr><td colspan="4" style="text-align:center; color:var(--muted); padding:24px;">
+      <tr><td colspan="5" style="text-align:center; color:var(--muted); padding:24px;">
         Nothing to organize — folder is already clean.
       </td></tr>`;
     els.organizeBtn.disabled = true;
@@ -287,15 +287,27 @@ function renderPlan(plan) {
 
   els.organizeBtn.disabled = false;
 
-  const rows = plan.items.map(it => `
-    <tr class="${it.renamed ? "renamed" : ""}">
-      <td>${escapeHtml(it.source_name)}</td>
-      <td class="arrow">→</td>
-      <td class="destination">${escapeHtml(it.destination_rel)}</td>
-      <td class="category">${escapeHtml(it.category)}</td>
-    </tr>
-  `);
+  const rows = plan.items.map(it => {
+    const thumb = it.is_image
+      ? `<img class="thumb" src="/api/thumbnail?path=${encodeURIComponent(it.source)}" alt="" loading="lazy" onerror="this.style.display='none'" />`
+      : `<span class="filetype">${filetypeBadge(it.source_name)}</span>`;
+
+    return `
+      <tr class="${it.renamed ? "renamed" : ""}">
+        <td class="thumb-cell">${thumb}</td>
+        <td>${escapeHtml(it.source_name)}</td>
+        <td class="arrow">→</td>
+        <td class="destination">${escapeHtml(it.destination_rel)}</td>
+        <td class="category">${escapeHtml(it.category)}</td>
+      </tr>
+    `;
+  });
   els.previewBody.innerHTML = rows.join("");
+}
+
+function filetypeBadge(filename) {
+  const ext = (filename.split(".").pop() || "").toUpperCase();
+  return ext.length <= 4 ? ext : ext.slice(0, 4);
 }
 
 // ---------- watch ----------

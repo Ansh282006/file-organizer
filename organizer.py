@@ -17,6 +17,10 @@ FALLBACK_CATEGORY = "Misc"
 SKIP_NAMES = {".DS_Store", "Thumbs.db", "desktop.ini"}
 SKIP_PREFIXES = (".",)
 
+MODE_EXTENSION = "extension"
+MODE_DATE = "date"
+VALID_MODES = {MODE_EXTENSION, MODE_DATE}
+
 
 # ---------- data classes ----------
 
@@ -39,6 +43,7 @@ class Plan:
     folder: Path
     items: list[PlanItem] = field(default_factory=list)
     skipped: list[Path] = field(default_factory=list)
+    mode: str = MODE_EXTENSION
 
     @property
     def total(self) -> int:
@@ -67,6 +72,11 @@ def category_for(suffix: str, rules: list[Rule]) -> str:
         if ext in rule.extensions:
             return rule.name
     return FALLBACK_CATEGORY
+
+
+def category_for_date(timestamp: float) -> str:
+    """Return the YYYY-MM folder name for a file's mtime."""
+    return datetime.fromtimestamp(timestamp).strftime("%Y-%m")
 
 
 # ---------- rules: writing ----------
@@ -160,13 +170,20 @@ def _unique_name(dest: Path, taken: set[Path]) -> tuple[Path, bool]:
 
 # ---------- scanning ----------
 
-def scan(folder: Path, rules: list[Rule] | None = None) -> Plan:
+def scan(
+    folder: Path,
+    rules: list[Rule] | None = None,
+    mode: str = MODE_EXTENSION,
+) -> Plan:
     folder = Path(folder).expanduser().resolve()
     if not folder.is_dir():
         raise NotADirectoryError(f"Not a folder: {folder}")
 
+    if mode not in VALID_MODES:
+        raise ValueError(f"Invalid mode: {mode}")
+
     rules = rules or load_rules()
-    plan = Plan(folder=folder)
+    plan = Plan(folder=folder, mode=mode)
     taken: set[Path] = set()
 
     for entry in sorted(folder.iterdir()):
@@ -176,8 +193,17 @@ def scan(folder: Path, rules: list[Rule] | None = None) -> Plan:
             plan.skipped.append(entry)
             continue
 
-        category = category_for(entry.suffix, rules)
+        if mode == MODE_DATE:
+            try:
+                mtime = entry.stat().st_mtime
+            except OSError:
+                plan.skipped.append(entry)
+                continue
+            category = category_for_date(mtime)
+        else:
+            category = category_for(entry.suffix, rules)
 
+        # Already in the right target folder? Skip.
         if entry.parent.name == category:
             plan.skipped.append(entry)
             continue
@@ -228,6 +254,7 @@ def execute(plan: Plan) -> Path:
     log = {
         "timestamp": timestamp,
         "folder": str(plan.folder),
+        "mode": plan.mode,
         "total": len(moves),
         "errors": errors,
         "moves": moves,
@@ -253,6 +280,7 @@ def list_logs() -> list[dict]:
             "file": f.name,
             "timestamp": data.get("timestamp", ""),
             "folder": data.get("folder", ""),
+            "mode": data.get("mode", MODE_EXTENSION),
             "total": data.get("total", 0),
             "undone": data.get("undone", False),
         })
@@ -343,7 +371,7 @@ def _prune_empty_dirs(root: str | None) -> None:
 # ---------- CLI preview ----------
 
 def print_plan(plan: Plan) -> None:
-    print(f"\n[DIR] {plan.folder}")
+    print(f"\n[DIR] {plan.folder}  (mode: {plan.mode})")
     print(f"    {plan.total} file(s) to organize, {len(plan.skipped)} skipped\n")
 
     if not plan.items:
@@ -362,5 +390,10 @@ def print_plan(plan: Plan) -> None:
 if __name__ == "__main__":
     import sys
 
-    target = Path(sys.argv[1]) if len(sys.argv) > 1 else Path.cwd()
-    print_plan(scan(target))
+    args = sys.argv[1:]
+    mode = MODE_EXTENSION
+    if "--date" in args:
+        mode = MODE_DATE
+        args.remove("--date")
+    target = Path(args[0]) if args else Path.cwd()
+    print_plan(scan(target, mode=mode))

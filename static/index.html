@@ -13,6 +13,15 @@
       <p class="subtitle">Preview what would move — nothing happens until you click Organize.</p>
     </header>
 
+    <section class="mode-row">
+      <span class="mode-label">Sort by:</span>
+      <div class="mode-toggle" role="tablist">
+        <button class="mode-btn active" data-mode="extension">Extension</button>
+        <button class="mode-btn" data-mode="date">Date</button>
+      </div>
+      <span id="mode-hint" class="mode-hint">Files go to folders like Images/, Documents/, Code/</span>
+    </section>
+
     <section class="controls">
       <input
         id="folder-input"
@@ -38,7 +47,7 @@
             <th>File</th>
             <th></th>
             <th>Destination</th>
-            <th>Category</th>
+            <th>Group</th>
           </tr>
         </thead>
         <tbody id="preview-body"></tbody>
@@ -62,6 +71,7 @@
       <div id="rules-body" class="rules-body hidden">
         <p class="rules-hint">
           Edit categories and extensions. Changes save instantly to <code>rules.yaml</code>.
+          These rules only apply in <strong>Extension</strong> mode.
         </p>
 
         <div id="rules-list"></div>

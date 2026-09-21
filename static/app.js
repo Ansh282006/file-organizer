@@ -19,10 +19,18 @@ const els = {
   rulesList:     $("#rules-list"),
   newCategory:   $("#new-category-input"),
   addCategoryBtn:$("#add-category-btn"),
+  modeHint:      $("#mode-hint"),
+  modeBtns:      document.querySelectorAll(".mode-btn"),
 };
 
 let latestUndoableLog = null;
 let rulesVisible = false;
+let currentMode = "extension";
+
+const MODE_HINTS = {
+  extension: "Files go to folders like Images/, Documents/, Code/",
+  date: "Files go to folders like 2026-09/, 2026-08/ (by modified date)",
+};
 
 function showStatus(msg, kind = "info") {
   els.status.textContent = msg;
@@ -49,6 +57,22 @@ function escapeHtml(s) {
     .replace(/"/g, "&quot;");
 }
 
+// ---------- mode toggle ----------
+
+function setMode(mode) {
+  currentMode = mode;
+  els.modeBtns.forEach(btn => {
+    btn.classList.toggle("active", btn.dataset.mode === mode);
+  });
+  els.modeHint.textContent = MODE_HINTS[mode] || "";
+  hideStatus();
+  hideResults();
+}
+
+els.modeBtns.forEach(btn => {
+  btn.addEventListener("click", () => setMode(btn.dataset.mode));
+});
+
 // ---------- logs + undo ----------
 
 async function loadLogs() {
@@ -61,7 +85,7 @@ async function loadLogs() {
       latestUndoableLog = undoable.file;
       els.undoBtn.disabled = false;
       els.lastRun.textContent =
-        `Last run: ${undoable.file}  ·  ${undoable.total} file(s)  ·  ${undoable.folder}`;
+        `Last run: ${undoable.file}  ·  ${undoable.total} file(s)  ·  mode: ${undoable.mode}  ·  ${undoable.folder}`;
       els.lastRun.classList.remove("hidden");
     } else {
       latestUndoableLog = null;
@@ -88,7 +112,8 @@ async function scan() {
   hideResults();
 
   try {
-    const res = await fetch(`/api/scan?path=${encodeURIComponent(path)}`);
+    const url = `/api/scan?path=${encodeURIComponent(path)}&mode=${currentMode}`;
+    const res = await fetch(url);
     const data = await res.json();
 
     if (!res.ok) {
@@ -112,7 +137,7 @@ async function organize() {
   if (!path) return;
 
   const confirmed = confirm(
-    `Move all files in:\n${path}\n\nYou can undo this from the Undo button. Continue?`
+    `Move all files in:\n${path}\n\nMode: ${currentMode}\n\nYou can undo this from the Undo button. Continue?`
   );
   if (!confirmed) return;
 
@@ -124,7 +149,7 @@ async function organize() {
     const res = await fetch("/api/organize", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ path }),
+      body: JSON.stringify({ path, mode: currentMode }),
     });
     const data = await res.json();
 
@@ -280,13 +305,11 @@ async function apiPost(url, body) {
   return data;
 }
 
-// Delegated click handler for the rules list
 els.rulesList.addEventListener("click", async (e) => {
   const row = e.target.closest(".rules-row");
   if (!row) return;
   const category = row.dataset.category;
 
-  // Remove extension (chip ×)
   if (e.target.classList.contains("chip-x")) {
     const extension = e.target.dataset.ext;
     try {
@@ -298,7 +321,6 @@ els.rulesList.addEventListener("click", async (e) => {
     return;
   }
 
-  // Add extension
   if (e.target.classList.contains("ext-add-btn")) {
     const input = row.querySelector(".ext-input");
     const value = input.value.trim();
@@ -312,7 +334,6 @@ els.rulesList.addEventListener("click", async (e) => {
     return;
   }
 
-  // Delete category
   if (e.target.classList.contains("cat-del-btn")) {
     if (!confirm(`Delete category "${category}"?`)) return;
     try {
@@ -324,7 +345,6 @@ els.rulesList.addEventListener("click", async (e) => {
   }
 });
 
-// Enter key in ext-input adds it
 els.rulesList.addEventListener("keydown", async (e) => {
   if (e.key !== "Enter") return;
   if (!e.target.classList.contains("ext-input")) return;
@@ -334,7 +354,6 @@ els.rulesList.addEventListener("keydown", async (e) => {
   addBtn.click();
 });
 
-// Add category button
 els.addCategoryBtn.addEventListener("click", async () => {
   const name = els.newCategory.value.trim();
   if (!name) {
@@ -355,7 +374,6 @@ els.newCategory.addEventListener("keydown", (e) => {
   if (e.key === "Enter") els.addCategoryBtn.click();
 });
 
-// Toggle rules panel
 els.toggleRules.addEventListener("click", () => {
   rulesVisible = !rulesVisible;
   els.rulesBody.classList.toggle("hidden", !rulesVisible);
@@ -380,4 +398,5 @@ els.folder.addEventListener("keydown", (e) => {
 });
 
 // Initial state
+setMode("extension");
 loadLogs();

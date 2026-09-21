@@ -8,6 +8,8 @@ from fastapi import FastAPI, HTTPException, Query
 from fastapi.staticfiles import StaticFiles
 
 from organizer import (
+    MODE_EXTENSION,
+    VALID_MODES,
     add_category,
     add_extension,
     execute,
@@ -34,10 +36,18 @@ def api_health():
 
 
 @app.get("/api/scan")
-def api_scan(path: str = Query(..., description="Absolute or ~-relative folder path")):
+def api_scan(
+    path: str = Query(..., description="Absolute or ~-relative folder path"),
+    mode: str = Query(MODE_EXTENSION, description="'extension' or 'date'"),
+):
+    if mode not in VALID_MODES:
+        raise HTTPException(status_code=400, detail=f"Invalid mode: {mode}")
+
     try:
-        plan = scan(Path(path))
+        plan = scan(Path(path), mode=mode)
     except NotADirectoryError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except PermissionError as e:
         raise HTTPException(status_code=403, detail=f"Permission denied: {e}")
@@ -53,9 +63,15 @@ def api_organize(payload: dict):
     if not path:
         raise HTTPException(status_code=400, detail="Missing 'path' in request body")
 
+    mode = payload.get("mode", MODE_EXTENSION)
+    if mode not in VALID_MODES:
+        raise HTTPException(status_code=400, detail=f"Invalid mode: {mode}")
+
     try:
-        plan = scan(Path(path))
+        plan = scan(Path(path), mode=mode)
     except NotADirectoryError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except PermissionError as e:
         raise HTTPException(status_code=403, detail=f"Permission denied: {e}")
@@ -73,6 +89,7 @@ def api_organize(payload: dict):
     return {
         "moved": plan.total,
         "renamed": plan.renamed,
+        "mode": plan.mode,
         "errors": [],
         "log_file": log_path.name,
         "message": f"Moved {plan.total} file(s)",
@@ -170,6 +187,7 @@ def api_remove_category(payload: dict):
 def plan_to_json(plan: Plan) -> dict:
     return {
         "folder": str(plan.folder),
+        "mode": plan.mode,
         "total": plan.total,
         "renamed": plan.renamed,
         "skipped": [str(p) for p in plan.skipped],

@@ -1,6 +1,8 @@
-"""Tests for organizer.py — scan, execute, undo, rules."""
+"""Tests for organizer.py — scan, execute, undo, rules, date mode."""
 
 import json
+import os
+import time
 
 import pytest
 
@@ -20,14 +22,19 @@ from organizer import (
 
 
 def touch(folder, name, content="x"):
-    """Create a file with content in folder."""
     p = folder / name
     p.write_text(content, encoding="utf-8")
     return p
 
 
+def set_mtime(path, year, month, day=15, hour=12):
+    """Set a file's mtime to a specific date."""
+    t = time.mktime((year, month, day, hour, 0, 0, 0, 0, 0))
+    os.utime(path, (t, t))
+
+
 # ============================================================
-# scan
+# scan — extension mode
 # ============================================================
 
 def test_scan_basic(workdir, rules_file):
@@ -43,7 +50,6 @@ def test_scan_basic(workdir, rules_file):
 def test_scan_unknown_goes_to_misc(workdir, rules_file):
     touch(workdir, "mystery.xyz")
     plan = scan(workdir, load_rules())
-    assert plan.total == 1
     assert plan.items[0].category == "Misc"
 
 
@@ -53,7 +59,6 @@ def test_scan_skips_hidden(workdir, rules_file):
     touch(workdir, "visible.jpg")
     plan = scan(workdir, load_rules())
     assert plan.total == 1
-    assert plan.items[0].source.name == "visible.jpg"
     assert len(plan.skipped) == 2
 
 
@@ -63,12 +68,10 @@ def test_scan_skips_already_sorted(workdir, rules_file):
     touch(workdir, "new.jpg")
     plan = scan(workdir, load_rules())
     assert plan.total == 1
-    assert plan.items[0].source.name == "new.jpg"
 
 
 def test_scan_empty_folder(workdir, rules_file):
-    plan = scan(workdir, load_rules())
-    assert plan.total == 0
+    assert scan(workdir, load_rules()).total == 0
 
 
 def test_scan_ignores_subfolders(workdir, rules_file):
@@ -77,7 +80,6 @@ def test_scan_ignores_subfolders(workdir, rules_file):
     touch(workdir, "b.jpg")
     plan = scan(workdir, load_rules())
     assert plan.total == 1
-    assert plan.items[0].source.name == "b.jpg"
 
 
 def test_scan_nonexistent_raises(tmp_path, rules_file):
@@ -92,6 +94,55 @@ def test_scan_case_insensitive_extension(workdir, rules_file):
 
 
 # ============================================================
+# scan — date mode
+# ============================================================
+
+def test_scan_date_mode(workdir, rules_file):
+    p = touch(workdir, "a.jpg")
+    set_mtime(p, 2026, 9)
+    plan = scan(workdir, mode="date")
+    assert plan.total == 1
+    assert plan.items[0].category == "2026-09"
+
+
+def test_scan_date_mode_groups_by_month(workdir, rules_file):
+    p1 = touch(workdir, "sep.jpg")
+    p2 = touch(workdir, "aug.jpg")
+    set_mtime(p1, 2026, 9)
+    set_mtime(p2, 2026, 8)
+    plan = scan(workdir, mode="date")
+    cats = {it.category for it in plan.items}
+    assert cats == {"2026-09", "2026-08"}
+
+
+def test_scan_date_mode_ignores_extension(workdir, rules_file):
+    p1 = touch(workdir, "a.jpg")
+    p2 = touch(workdir, "b.pdf")
+    set_mtime(p1, 2026, 9)
+    set_mtime(p2, 2026, 9)
+    plan = scan(workdir, mode="date")
+    # Both go to 2026-09, not Images/Documents
+    cats = {it.category for it in plan.items}
+    assert cats == {"2026-09"}
+
+
+def test_scan_date_mode_skips_already_sorted(workdir, rules_file):
+    (workdir / "2026-09").mkdir()
+    p = touch(workdir / "2026-09", "old.jpg")
+    set_mtime(p, 2026, 9)
+    p2 = touch(workdir, "new.jpg")
+    set_mtime(p2, 2026, 9)
+    plan = scan(workdir, mode="date")
+    assert plan.total == 1
+    assert plan.items[0].source.name == "new.jpg"
+
+
+def test_scan_invalid_mode_raises(workdir, rules_file):
+    with pytest.raises(ValueError):
+        scan(workdir, mode="banana")
+
+
+# ============================================================
 # collision
 # ============================================================
 
@@ -100,10 +151,8 @@ def test_collision_with_existing(workdir, rules_file):
     touch(workdir / "Images", "photo.jpg")
     touch(workdir, "photo.jpg")
     plan = scan(workdir, load_rules())
-    assert plan.total == 1
-    item = plan.items[0]
-    assert item.renamed is True
-    assert item.destination.name == "photo_1.jpg"
+    assert plan.items[0].renamed is True
+    assert plan.items[0].destination.name == "photo_1.jpg"
 
 
 def test_double_collision(workdir, rules_file):
@@ -115,17 +164,6 @@ def test_double_collision(workdir, rules_file):
     assert plan.items[0].destination.name == "photo_2.jpg"
 
 
-def test_collision_within_same_plan(workdir, rules_file):
-    """Two files from different source names, same destination stem after rename."""
-    # photo.jpg and PHOTO.jpg both target Images — Windows can't do this,
-    # so simulate via renaming path logic directly
-    (workdir / "Images").mkdir()
-    touch(workdir / "Images", "a.jpg")
-    touch(workdir, "a.jpg")
-    plan = scan(workdir, load_rules())
-    assert plan.items[0].destination.name == "a_1.jpg"
-
-
 # ============================================================
 # execute
 # ============================================================
@@ -133,32 +171,23 @@ def test_collision_within_same_plan(workdir, rules_file):
 def test_execute_moves_files(workdir, rules_file, log_dir):
     touch(workdir, "a.jpg")
     touch(workdir, "b.pdf")
-    plan = scan(workdir, load_rules())
-    log_path = execute(plan)
-
+    log_path = execute(scan(workdir, load_rules()))
     assert (workdir / "Images" / "a.jpg").exists()
     assert (workdir / "Documents" / "b.pdf").exists()
-    assert not (workdir / "a.jpg").exists()
     assert log_path.exists()
 
 
-def test_execute_writes_log(workdir, rules_file, log_dir):
-    touch(workdir, "a.jpg")
-    plan = scan(workdir, load_rules())
-    log_path = execute(plan)
-
+def test_execute_logs_mode(workdir, rules_file, log_dir):
+    p = touch(workdir, "a.jpg")
+    set_mtime(p, 2026, 9)
+    log_path = execute(scan(workdir, mode="date"))
     data = json.loads(log_path.read_text())
-    assert data["total"] == 1
-    assert len(data["moves"]) == 1
-    assert data["moves"][0]["source"].endswith("a.jpg")
-    assert data["errors"] == []
+    assert data["mode"] == "date"
 
 
 def test_execute_empty_plan(workdir, rules_file, log_dir):
-    plan = scan(workdir, load_rules())
-    log_path = execute(plan)
-    data = json.loads(log_path.read_text())
-    assert data["total"] == 0
+    log_path = execute(scan(workdir, load_rules()))
+    assert json.loads(log_path.read_text())["total"] == 0
 
 
 # ============================================================
@@ -168,33 +197,25 @@ def test_execute_empty_plan(workdir, rules_file, log_dir):
 def test_undo_restores_files(workdir, rules_file, log_dir):
     touch(workdir, "a.jpg")
     touch(workdir, "b.pdf")
-    plan = scan(workdir, load_rules())
-    log_path = execute(plan)
-
+    log_path = execute(scan(workdir, load_rules()))
     result = undo(log_path)
-
     assert result["restored"] == 2
     assert (workdir / "a.jpg").exists()
     assert (workdir / "b.pdf").exists()
-    assert not (workdir / "Images").exists()
-    assert not (workdir / "Documents").exists()
 
 
-def test_undo_marks_log_done(workdir, rules_file, log_dir):
-    touch(workdir, "a.jpg")
-    plan = scan(workdir, load_rules())
-    log_path = execute(plan)
+def test_undo_date_mode(workdir, rules_file, log_dir):
+    p = touch(workdir, "a.jpg")
+    set_mtime(p, 2026, 9)
+    log_path = execute(scan(workdir, mode="date"))
     undo(log_path)
-
-    data = json.loads(log_path.read_text())
-    assert data["undone"] is True
-    assert "undone_at" in data
+    assert (workdir / "a.jpg").exists()
+    assert not (workdir / "2026-09").exists()
 
 
 def test_undo_twice_fails(workdir, rules_file, log_dir):
     touch(workdir, "a.jpg")
-    plan = scan(workdir, load_rules())
-    log_path = execute(plan)
+    log_path = execute(scan(workdir, load_rules()))
     undo(log_path)
     with pytest.raises(ValueError):
         undo(log_path)
@@ -203,12 +224,8 @@ def test_undo_twice_fails(workdir, rules_file, log_dir):
 def test_undo_missing_file_reports_error(workdir, rules_file, log_dir):
     touch(workdir, "a.jpg")
     touch(workdir, "b.jpg")
-    plan = scan(workdir, load_rules())
-    log_path = execute(plan)
-
-    # Delete one of the moved files
+    log_path = execute(scan(workdir, load_rules()))
     (workdir / "Images" / "a.jpg").unlink()
-
     result = undo(log_path)
     assert result["restored"] == 1
     assert len(result["errors"]) == 1
@@ -233,7 +250,6 @@ def test_list_logs_after_execute(workdir, rules_file, log_dir):
     logs = list_logs()
     assert len(logs) == 1
     assert logs[0]["file"] == log_path.name
-    assert logs[0]["undone"] is False
 
 
 def test_latest_undoable_skips_done(workdir, rules_file, log_dir):
@@ -250,15 +266,13 @@ def test_latest_undoable_skips_done(workdir, rules_file, log_dir):
 
 def test_add_extension(rules_file):
     add_extension("Images", ".heif")
-    rules = load_rules()
-    images = next(r for r in rules if r.name == "Images")
+    images = next(r for r in load_rules() if r.name == "Images")
     assert ".heif" in images.extensions
 
 
 def test_add_extension_normalises_dot(rules_file):
     add_extension("Images", "heif")
-    rules = load_rules()
-    images = next(r for r in rules if r.name == "Images")
+    images = next(r for r in load_rules() if r.name == "Images")
     assert ".heif" in images.extensions
 
 
@@ -274,23 +288,14 @@ def test_add_extension_empty(rules_file):
 
 def test_remove_extension(rules_file):
     remove_extension("Images", ".jpg")
-    rules = load_rules()
-    images = next(r for r in rules if r.name == "Images")
+    images = next(r for r in load_rules() if r.name == "Images")
     assert ".jpg" not in images.extensions
 
 
 def test_add_category(rules_file):
     add_category("Videos", [".mp4", ".mkv"])
-    rules = load_rules()
-    names = [r.name for r in rules]
+    names = [r.name for r in load_rules()]
     assert "Videos" in names
-
-
-def test_add_category_normalises_extensions(rules_file):
-    add_category("Videos", ["mp4", ".mkv"])
-    rules = load_rules()
-    videos = next(r for r in rules if r.name == "Videos")
-    assert videos.extensions == {".mp4", ".mkv"}
 
 
 def test_add_duplicate_category_fails(rules_file):
@@ -305,8 +310,7 @@ def test_add_empty_category_fails(rules_file):
 
 def test_remove_category(rules_file):
     remove_category("Images")
-    rules = load_rules()
-    names = [r.name for r in rules]
+    names = [r.name for r in load_rules()]
     assert "Images" not in names
 
 

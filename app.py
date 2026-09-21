@@ -5,10 +5,9 @@ from __future__ import annotations
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Query
-from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
-from organizer import load_rules, scan, Plan
+from organizer import execute, load_rules, scan, Plan
 
 app = FastAPI(title="File Organizer", version="0.1.0")
 
@@ -17,12 +16,19 @@ STATIC_DIR = Path(__file__).parent / "static"
 
 # ---------- API ----------
 
+@app.get("/api/health")
+def api_health():
+    return {"status": "ok"}
+
+
+@app.get("/api/rules")
+def api_rules():
+    rules = load_rules()
+    return {r.name: sorted(r.extensions) for r in rules}
+
+
 @app.get("/api/scan")
 def api_scan(path: str = Query(..., description="Absolute or ~-relative folder path")):
-    """
-    Scan a folder and return the plan as JSON.
-    Does NOT move any files — this is read-only.
-    """
     try:
         plan = scan(Path(path))
     except NotADirectoryError as e:
@@ -35,20 +41,39 @@ def api_scan(path: str = Query(..., description="Absolute or ~-relative folder p
     return plan_to_json(plan)
 
 
-@app.get("/api/rules")
-def api_rules():
-    """Return the current rules.yaml as JSON so the UI can display it."""
-    rules = load_rules()
-    return {r.name: sorted(r.extensions) for r in rules}
+@app.post("/api/organize")
+def api_organize(payload: dict):
+    path = payload.get("path")
+    if not path:
+        raise HTTPException(status_code=400, detail="Missing 'path' in request body")
 
+    try:
+        plan = scan(Path(path))
+    except NotADirectoryError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except PermissionError as e:
+        raise HTTPException(status_code=403, detail=f"Permission denied: {e}")
 
-@app.get("/api/health")
-def api_health():
-    return {"status": "ok"}
+    if plan.total == 0:
+        return {
+            "moved": 0,
+            "errors": [],
+            "log_file": None,
+            "message": "Nothing to organize",
+        }
+
+    log_path = execute(plan)
+
+    return {
+        "moved": plan.total,
+        "renamed": plan.renamed,
+        "errors": [],
+        "log_file": log_path.name,
+        "message": f"Moved {plan.total} file(s)",
+    }
 
 
 def plan_to_json(plan: Plan) -> dict:
-    """Serialise a Plan object for the frontend."""
     return {
         "folder": str(plan.folder),
         "total": plan.total,
@@ -68,7 +93,7 @@ def plan_to_json(plan: Plan) -> dict:
     }
 
 
-# ---------- static frontend (added in Step 5) ----------
+# ---------- static frontend ----------
 
 if STATIC_DIR.exists():
     app.mount("/", StaticFiles(directory=str(STATIC_DIR), html=True), name="static")

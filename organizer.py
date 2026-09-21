@@ -1,19 +1,24 @@
-"""Core file-organizer logic: scan, plan, and (later) execute moves."""
+"""Core file-organizer logic: scan, plan, execute."""
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
 
 import yaml
 
 
 RULES_FILE = Path(__file__).parent / "rules.yaml"
+LOG_DIR = Path(__file__).parent / "logs"
 FALLBACK_CATEGORY = "Misc"
 
 SKIP_NAMES = {".DS_Store", "Thumbs.db", "desktop.ini"}
 SKIP_PREFIXES = (".",)
 
+
+# ---------- data classes ----------
 
 @dataclass
 class Rule:
@@ -26,14 +31,14 @@ class PlanItem:
     source: Path
     destination: Path
     category: str
-    renamed: bool = False   # True if we changed the filename to avoid a clash
+    renamed: bool = False
 
 
 @dataclass
 class Plan:
     folder: Path
     items: list[PlanItem] = field(default_factory=list)
-    skipped: list[Path] = field(default_factory=list)  # already sorted / ignored
+    skipped: list[Path] = field(default_factory=list)
 
     @property
     def total(self) -> int:
@@ -73,12 +78,6 @@ def should_skip(path: Path) -> bool:
 
 
 def _unique_name(dest: Path, taken: set[Path]) -> tuple[Path, bool]:
-    """
-    If `dest` clashes with an existing file OR with another item already
-    claimed in this plan, append _1, _2, ... until it doesn't.
-
-    Returns (final_path, was_renamed).
-    """
     if not dest.exists() and dest not in taken:
         return dest, False
 
@@ -95,10 +94,6 @@ def _unique_name(dest: Path, taken: set[Path]) -> tuple[Path, bool]:
 # ---------- scanning ----------
 
 def scan(folder: Path, rules: list[Rule] | None = None) -> Plan:
-    """
-    Walk the top level of `folder` (non-recursive) and build a Plan.
-    Subfolders are left alone; files already in their target folder are skipped.
-    """
     folder = Path(folder).expanduser().resolve()
     if not folder.is_dir():
         raise NotADirectoryError(f"Not a folder: {folder}")
@@ -116,7 +111,6 @@ def scan(folder: Path, rules: list[Rule] | None = None) -> Plan:
 
         category = category_for(entry.suffix, rules)
 
-        # Already in the right category folder? Skip it.
         if entry.parent.name == category:
             plan.skipped.append(entry)
             continue
@@ -138,10 +132,50 @@ def scan(folder: Path, rules: list[Rule] | None = None) -> Plan:
     return plan
 
 
+# ---------- execution ----------
+
+def execute(plan: Plan) -> Path:
+    """
+    Actually move the files in `plan`. Writes a JSON log to logs/.
+    Returns the path of the log file.
+    """
+    LOG_DIR.mkdir(exist_ok=True)
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    log_path = LOG_DIR / f"organize_{timestamp}.json"
+
+    moves: list[dict] = []
+    errors: list[dict] = []
+
+    for item in plan.items:
+        try:
+            item.destination.parent.mkdir(parents=True, exist_ok=True)
+            item.source.rename(item.destination)
+            moves.append({
+                "source": str(item.source),
+                "destination": str(item.destination),
+                "renamed": item.renamed,
+            })
+        except Exception as e:
+            errors.append({
+                "source": str(item.source),
+                "error": f"{type(e).__name__}: {e}",
+            })
+
+    log = {
+        "timestamp": timestamp,
+        "folder": str(plan.folder),
+        "total": len(moves),
+        "errors": errors,
+        "moves": moves,
+    }
+    log_path.write_text(json.dumps(log, indent=2), encoding="utf-8")
+    return log_path
+
+
 # ---------- CLI preview ----------
 
 def print_plan(plan: Plan) -> None:
-    print(f"\n📁  {plan.folder}")
+    print(f"\n[DIR] {plan.folder}")
     print(f"    {plan.total} file(s) to organize, {len(plan.skipped)} skipped\n")
 
     if not plan.items:
@@ -149,12 +183,12 @@ def print_plan(plan: Plan) -> None:
         return
 
     for it in plan.items:
-        marker = "✎ " if it.renamed else "  "
+        marker = "* " if it.renamed else "  "
         rel_dest = it.destination.relative_to(plan.folder)
-        print(f"  {marker}{it.source.name:<40} → {rel_dest}")
+        print(f"  {marker}{it.source.name:<40} -> {rel_dest}")
 
     if plan.renamed:
-        print(f"\n  ✎  {plan.renamed} file(s) renamed to avoid clashes.")
+        print(f"\n  *  {plan.renamed} file(s) renamed to avoid clashes.")
 
 
 if __name__ == "__main__":

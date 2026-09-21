@@ -1,17 +1,17 @@
 const $ = (sel) => document.querySelector(sel);
 
 const els = {
-  folder:     $("#folder-input"),
-  scanBtn:    $("#scan-btn"),
-  organizeBtn:$("#organize-btn"),
-  clearBtn:   $("#clear-btn"),
-  status:     $("#status"),
-  summary:    $("#summary"),
+  folder:        $("#folder-input"),
+  scanBtn:       $("#scan-btn"),
+  organizeBtn:   $("#organize-btn"),
+  clearBtn:      $("#clear-btn"),
+  status:        $("#status"),
+  summary:       $("#summary"),
   summaryFolder: $("#summary-folder"),
   summaryCounts: $("#summary-counts"),
-  preview:    $("#preview"),
-  previewBody:$("#preview-body"),
-  actions:    $("#actions"),
+  preview:       $("#preview"),
+  previewBody:   $("#preview-body"),
+  actions:       $("#actions"),
 };
 
 function showStatus(msg, kind = "info") {
@@ -39,7 +39,7 @@ async function scan() {
   }
 
   els.scanBtn.disabled = true;
-  els.scanBtn.textContent = "Scanning…";
+  els.scanBtn.textContent = "Scanning...";
   hideStatus();
   hideResults();
 
@@ -58,6 +58,46 @@ async function scan() {
   } finally {
     els.scanBtn.disabled = false;
     els.scanBtn.textContent = "Scan";
+  }
+}
+
+async function organize() {
+  const path = els.folder.value.trim();
+  if (!path) return;
+
+  const confirmed = confirm(
+    `Move all files in:\n${path}\n\nThis can be undone from the log. Continue?`
+  );
+  if (!confirmed) return;
+
+  els.organizeBtn.disabled = true;
+  els.organizeBtn.textContent = "Organizing...";
+  hideStatus();
+
+  try {
+    const res = await fetch("/api/organize", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ path }),
+    });
+    const data = await res.json();
+
+    if (!res.ok) {
+      showStatus(data.detail || `Error ${res.status}`, "error");
+      return;
+    }
+
+    showStatus(
+      `${data.message}` + (data.log_file ? ` — log: ${data.log_file}` : ""),
+      "success"
+    );
+
+    await scan();
+  } catch (err) {
+    showStatus(`Network error: ${err.message}`, "error");
+  } finally {
+    els.organizeBtn.disabled = false;
+    els.organizeBtn.textContent = "Organize";
   }
 }
 
@@ -110,6 +150,7 @@ function clear() {
 }
 
 els.scanBtn.addEventListener("click", scan);
+els.organizeBtn.addEventListener("click", organize);
 els.clearBtn.addEventListener("click", clear);
 els.folder.addEventListener("keydown", (e) => {
   if (e.key === "Enter") scan();

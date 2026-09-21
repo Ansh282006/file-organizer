@@ -52,6 +52,26 @@
     </section>
 
     <p id="last-run" class="last-run hidden"></p>
+
+    <section id="rules-panel" class="rules-panel">
+      <div class="rules-header">
+        <h2>Rules</h2>
+        <button id="toggle-rules" class="secondary">Show</button>
+      </div>
+
+      <div id="rules-body" class="rules-body hidden">
+        <p class="rules-hint">
+          Edit categories and extensions. Changes save instantly to <code>rules.yaml</code>.
+        </p>
+
+        <div id="rules-list"></div>
+
+        <div class="rules-add-category">
+          <input id="new-category-input" type="text" placeholder="New category name" spellcheck="false" />
+          <button id="add-category-btn" class="primary">Add category</button>
+        </div>
+      </div>
+    </section>
   </main>
 
   <script src="/app.js"></script>

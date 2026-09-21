@@ -14,9 +14,15 @@ const els = {
   previewBody:   $("#preview-body"),
   actions:       $("#actions"),
   lastRun:       $("#last-run"),
+  toggleRules:   $("#toggle-rules"),
+  rulesBody:     $("#rules-body"),
+  rulesList:     $("#rules-list"),
+  newCategory:   $("#new-category-input"),
+  addCategoryBtn:$("#add-category-btn"),
 };
 
 let latestUndoableLog = null;
+let rulesVisible = false;
 
 function showStatus(msg, kind = "info") {
   els.status.textContent = msg;
@@ -34,6 +40,16 @@ function hideResults() {
   els.actions.classList.add("hidden");
   els.previewBody.innerHTML = "";
 }
+
+function escapeHtml(s) {
+  return String(s)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+// ---------- logs + undo ----------
 
 async function loadLogs() {
   try {
@@ -53,9 +69,11 @@ async function loadLogs() {
       els.lastRun.classList.add("hidden");
     }
   } catch {
-    // Non-fatal — leave Undo disabled
+    // Non-fatal
   }
 }
+
+// ---------- scan ----------
 
 async function scan() {
   const path = els.folder.value.trim();
@@ -86,6 +104,8 @@ async function scan() {
     els.scanBtn.textContent = "Scan";
   }
 }
+
+// ---------- organize ----------
 
 async function organize() {
   const path = els.folder.value.trim();
@@ -127,6 +147,8 @@ async function organize() {
     els.organizeBtn.textContent = "Organize";
   }
 }
+
+// ---------- undo ----------
 
 async function undo() {
   if (!latestUndoableLog) return;
@@ -170,6 +192,8 @@ async function undo() {
   }
 }
 
+// ---------- plan rendering ----------
+
 function renderPlan(plan) {
   els.summaryFolder.textContent = plan.folder;
 
@@ -204,13 +228,142 @@ function renderPlan(plan) {
   els.previewBody.innerHTML = rows.join("");
 }
 
-function escapeHtml(s) {
-  return String(s)
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;");
+// ---------- rules editor ----------
+
+async function loadRules() {
+  try {
+    const res = await fetch("/api/rules");
+    const data = await res.json();
+    renderRules(data);
+  } catch (err) {
+    els.rulesList.innerHTML = `<p class="rules-hint">Failed to load rules: ${escapeHtml(err.message)}</p>`;
+  }
 }
+
+function renderRules(rules) {
+  const entries = Object.entries(rules);
+  if (entries.length === 0) {
+    els.rulesList.innerHTML = `<p class="rules-hint">No categories yet. Add one below.</p>`;
+    return;
+  }
+
+  const html = entries.map(([cat, exts]) => `
+    <div class="rules-row" data-category="${escapeHtml(cat)}">
+      <div class="rules-cat">${escapeHtml(cat)}</div>
+      <div class="rules-exts">
+        ${exts.map(e => `
+          <span class="ext-chip">
+            ${escapeHtml(e)}
+            <button class="chip-x" data-cat="${escapeHtml(cat)}" data-ext="${escapeHtml(e)}" title="Remove">×</button>
+          </span>
+        `).join("")}
+        <input type="text" class="ext-input" placeholder="+ ext" spellcheck="false" />
+        <button class="ext-add-btn secondary">Add</button>
+        <button class="cat-del-btn danger">Delete category</button>
+      </div>
+    </div>
+  `).join("");
+
+  els.rulesList.innerHTML = html;
+}
+
+async function apiPost(url, body) {
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error(data.detail || `Error ${res.status}`);
+  }
+  return data;
+}
+
+// Delegated click handler for the rules list
+els.rulesList.addEventListener("click", async (e) => {
+  const row = e.target.closest(".rules-row");
+  if (!row) return;
+  const category = row.dataset.category;
+
+  // Remove extension (chip ×)
+  if (e.target.classList.contains("chip-x")) {
+    const extension = e.target.dataset.ext;
+    try {
+      await apiPost("/api/rules/remove-extension", { category, extension });
+      await loadRules();
+    } catch (err) {
+      showStatus(`Rules: ${err.message}`, "error");
+    }
+    return;
+  }
+
+  // Add extension
+  if (e.target.classList.contains("ext-add-btn")) {
+    const input = row.querySelector(".ext-input");
+    const value = input.value.trim();
+    if (!value) return;
+    try {
+      await apiPost("/api/rules/add-extension", { category, extension: value });
+      await loadRules();
+    } catch (err) {
+      showStatus(`Rules: ${err.message}`, "error");
+    }
+    return;
+  }
+
+  // Delete category
+  if (e.target.classList.contains("cat-del-btn")) {
+    if (!confirm(`Delete category "${category}"?`)) return;
+    try {
+      await apiPost("/api/rules/remove-category", { name: category });
+      await loadRules();
+    } catch (err) {
+      showStatus(`Rules: ${err.message}`, "error");
+    }
+  }
+});
+
+// Enter key in ext-input adds it
+els.rulesList.addEventListener("keydown", async (e) => {
+  if (e.key !== "Enter") return;
+  if (!e.target.classList.contains("ext-input")) return;
+  e.preventDefault();
+  const row = e.target.closest(".rules-row");
+  const addBtn = row.querySelector(".ext-add-btn");
+  addBtn.click();
+});
+
+// Add category button
+els.addCategoryBtn.addEventListener("click", async () => {
+  const name = els.newCategory.value.trim();
+  if (!name) {
+    showStatus("Enter a category name.", "error");
+    return;
+  }
+  try {
+    await apiPost("/api/rules/add-category", { name });
+    els.newCategory.value = "";
+    await loadRules();
+    showStatus(`Category "${name}" added.`, "success");
+  } catch (err) {
+    showStatus(`Rules: ${err.message}`, "error");
+  }
+});
+
+els.newCategory.addEventListener("keydown", (e) => {
+  if (e.key === "Enter") els.addCategoryBtn.click();
+});
+
+// Toggle rules panel
+els.toggleRules.addEventListener("click", () => {
+  rulesVisible = !rulesVisible;
+  els.rulesBody.classList.toggle("hidden", !rulesVisible);
+  els.toggleRules.textContent = rulesVisible ? "Hide" : "Show";
+  if (rulesVisible) loadRules();
+});
+
+// ---------- misc ----------
 
 function clear() {
   els.folder.value = "";
@@ -226,5 +379,5 @@ els.folder.addEventListener("keydown", (e) => {
   if (e.key === "Enter") scan();
 });
 
-// Load state on page open
+// Initial state
 loadLogs();

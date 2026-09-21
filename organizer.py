@@ -1,4 +1,4 @@
-"""Core file-organizer logic: scan, plan, execute, undo."""
+"""Core file-organizer logic: scan, plan, execute, undo, rules editing."""
 
 from __future__ import annotations
 
@@ -49,7 +49,7 @@ class Plan:
         return sum(1 for it in self.items if it.renamed)
 
 
-# ---------- rules ----------
+# ---------- rules: reading ----------
 
 def load_rules(path: Path = RULES_FILE) -> list[Rule]:
     raw = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
@@ -66,6 +66,70 @@ def category_for(suffix: str, rules: list[Rule]) -> str:
         if ext in rule.extensions:
             return rule.name
     return FALLBACK_CATEGORY
+
+
+# ---------- rules: writing ----------
+
+def _load_rules_raw(path: Path = RULES_FILE) -> dict:
+    return yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+
+
+def _write_rules_raw(data: dict, path: Path = RULES_FILE) -> None:
+    path.write_text(
+        yaml.dump(data, sort_keys=False, default_flow_style=False),
+        encoding="utf-8",
+    )
+
+
+def _normalise_ext(ext: str) -> str:
+    ext = ext.strip().lower()
+    if ext and not ext.startswith("."):
+        ext = "." + ext
+    return ext
+
+
+def add_extension(category: str, extension: str) -> None:
+    ext = _normalise_ext(extension)
+    if not ext:
+        raise ValueError("Extension cannot be empty")
+    data = _load_rules_raw()
+    if category not in data:
+        raise KeyError(f"Category not found: {category}")
+    exts = set(data[category].get("extensions") or [])
+    exts.add(ext)
+    data[category]["extensions"] = sorted(exts)
+    _write_rules_raw(data)
+
+
+def remove_extension(category: str, extension: str) -> None:
+    ext = _normalise_ext(extension)
+    data = _load_rules_raw()
+    if category not in data:
+        raise KeyError(f"Category not found: {category}")
+    exts = set(data[category].get("extensions") or [])
+    exts.discard(ext)
+    data[category]["extensions"] = sorted(exts)
+    _write_rules_raw(data)
+
+
+def add_category(name: str, extensions: list[str] | None = None) -> None:
+    name = name.strip()
+    if not name:
+        raise ValueError("Category name cannot be empty")
+    data = _load_rules_raw()
+    if name in data:
+        raise ValueError(f"Category already exists: {name}")
+    exts = sorted({_normalise_ext(e) for e in (extensions or []) if _normalise_ext(e)})
+    data[name] = {"extensions": exts}
+    _write_rules_raw(data)
+
+
+def remove_category(name: str) -> None:
+    data = _load_rules_raw()
+    if name not in data:
+        raise KeyError(f"Category not found: {name}")
+    del data[name]
+    _write_rules_raw(data)
 
 
 # ---------- helpers ----------

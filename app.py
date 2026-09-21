@@ -8,10 +8,14 @@ from fastapi import FastAPI, HTTPException, Query
 from fastapi.staticfiles import StaticFiles
 
 from organizer import (
+    add_category,
+    add_extension,
     execute,
     latest_undoable_log,
     list_logs,
     load_rules,
+    remove_category,
+    remove_extension,
     scan,
     undo,
     Plan,
@@ -27,12 +31,6 @@ STATIC_DIR = Path(__file__).parent / "static"
 @app.get("/api/health")
 def api_health():
     return {"status": "ok"}
-
-
-@app.get("/api/rules")
-def api_rules():
-    rules = load_rules()
-    return {r.name: sorted(r.extensions) for r in rules}
 
 
 @app.get("/api/scan")
@@ -107,6 +105,66 @@ def api_undo(payload: dict | None = None):
         raise HTTPException(status_code=500, detail=f"{type(e).__name__}: {e}")
 
     return result
+
+
+# ---------- rules endpoints ----------
+
+@app.get("/api/rules")
+def api_rules():
+    rules = load_rules()
+    return {r.name: sorted(r.extensions) for r in rules}
+
+
+@app.post("/api/rules/add-extension")
+def api_add_extension(payload: dict):
+    category = payload.get("category")
+    extension = payload.get("extension")
+    if not category or not extension:
+        raise HTTPException(status_code=400, detail="Missing category or extension")
+    try:
+        add_extension(category, extension)
+    except KeyError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return {"ok": True}
+
+
+@app.post("/api/rules/remove-extension")
+def api_remove_extension(payload: dict):
+    category = payload.get("category")
+    extension = payload.get("extension")
+    if not category or not extension:
+        raise HTTPException(status_code=400, detail="Missing category or extension")
+    try:
+        remove_extension(category, extension)
+    except KeyError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    return {"ok": True}
+
+
+@app.post("/api/rules/add-category")
+def api_add_category(payload: dict):
+    name = payload.get("name")
+    if not name:
+        raise HTTPException(status_code=400, detail="Missing category name")
+    try:
+        add_category(name, payload.get("extensions") or [])
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return {"ok": True}
+
+
+@app.post("/api/rules/remove-category")
+def api_remove_category(payload: dict):
+    name = payload.get("name")
+    if not name:
+        raise HTTPException(status_code=400, detail="Missing category name")
+    try:
+        remove_category(name)
+    except KeyError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    return {"ok": True}
 
 
 def plan_to_json(plan: Plan) -> dict:

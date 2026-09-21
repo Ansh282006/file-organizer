@@ -22,10 +22,12 @@ from organizer import (
     undo,
     Plan,
 )
+from watcher import WatchManager
 
-app = FastAPI(title="File Organizer", version="0.1.0")
+app = FastAPI(title="File Organizer", version="0.2.0")
 
 STATIC_DIR = Path(__file__).parent / "static"
+watch_manager = WatchManager()
 
 
 # ---------- API ----------
@@ -122,6 +124,34 @@ def api_undo(payload: dict | None = None):
         raise HTTPException(status_code=500, detail=f"{type(e).__name__}: {e}")
 
     return result
+
+
+# ---------- watch endpoints ----------
+
+@app.get("/api/watch/status")
+def api_watch_status():
+    return watch_manager.status()
+
+
+@app.post("/api/watch/start")
+def api_watch_start(payload: dict):
+    path = payload.get("path")
+    if not path:
+        raise HTTPException(status_code=400, detail="Missing 'path'")
+    mode = payload.get("mode", MODE_EXTENSION)
+    try:
+        return watch_manager.start(Path(path), mode=mode)
+    except NotADirectoryError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"{type(e).__name__}: {e}")
+
+
+@app.post("/api/watch/stop")
+def api_watch_stop():
+    return watch_manager.stop()
 
 
 # ---------- rules endpoints ----------

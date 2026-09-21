@@ -21,11 +21,19 @@ const els = {
   addCategoryBtn:$("#add-category-btn"),
   modeHint:      $("#mode-hint"),
   modeBtns:      document.querySelectorAll(".mode-btn"),
+  // watch
+  watchBadge:    $("#watch-badge"),
+  watchStartBtn: $("#watch-start-btn"),
+  watchStopBtn:  $("#watch-stop-btn"),
+  watchStatus:   $("#watch-status"),
+  watchRuns:     $("#watch-runs"),
+  watchRunsList: $("#watch-runs-list"),
 };
 
 let latestUndoableLog = null;
 let rulesVisible = false;
 let currentMode = "extension";
+let watchPollTimer = null;
 
 const MODE_HINTS = {
   extension: "Files go to folders like Images/, Documents/, Code/",
@@ -38,9 +46,7 @@ function showStatus(msg, kind = "info") {
   els.status.classList.remove("hidden");
 }
 
-function hideStatus() {
-  els.status.classList.add("hidden");
-}
+function hideStatus() { els.status.classList.add("hidden"); }
 
 function hideResults() {
   els.summary.classList.add("hidden");
@@ -61,17 +67,13 @@ function escapeHtml(s) {
 
 function setMode(mode) {
   currentMode = mode;
-  els.modeBtns.forEach(btn => {
-    btn.classList.toggle("active", btn.dataset.mode === mode);
-  });
+  els.modeBtns.forEach(btn => btn.classList.toggle("active", btn.dataset.mode === mode));
   els.modeHint.textContent = MODE_HINTS[mode] || "";
   hideStatus();
   hideResults();
 }
 
-els.modeBtns.forEach(btn => {
-  btn.addEventListener("click", () => setMode(btn.dataset.mode));
-});
+els.modeBtns.forEach(btn => btn.addEventListener("click", () => setMode(btn.dataset.mode)));
 
 // ---------- logs + undo ----------
 
@@ -80,7 +82,6 @@ async function loadLogs() {
     const res = await fetch("/api/logs");
     const data = await res.json();
     const undoable = (data.logs || []).find(l => !l.undone);
-
     if (undoable) {
       latestUndoableLog = undoable.file;
       els.undoBtn.disabled = false;
@@ -92,19 +93,14 @@ async function loadLogs() {
       els.undoBtn.disabled = true;
       els.lastRun.classList.add("hidden");
     }
-  } catch {
-    // Non-fatal
-  }
+  } catch {}
 }
 
 // ---------- scan ----------
 
 async function scan() {
   const path = els.folder.value.trim();
-  if (!path) {
-    showStatus("Enter a folder path first.", "error");
-    return;
-  }
+  if (!path) { showStatus("Enter a folder path first.", "error"); return; }
 
   els.scanBtn.disabled = true;
   els.scanBtn.textContent = "Scanning...";
@@ -115,12 +111,7 @@ async function scan() {
     const url = `/api/scan?path=${encodeURIComponent(path)}&mode=${currentMode}`;
     const res = await fetch(url);
     const data = await res.json();
-
-    if (!res.ok) {
-      showStatus(data.detail || `Error ${res.status}`, "error");
-      return;
-    }
-
+    if (!res.ok) { showStatus(data.detail || `Error ${res.status}`, "error"); return; }
     renderPlan(data);
   } catch (err) {
     showStatus(`Network error: ${err.message}`, "error");
@@ -152,17 +143,9 @@ async function organize() {
       body: JSON.stringify({ path, mode: currentMode }),
     });
     const data = await res.json();
+    if (!res.ok) { showStatus(data.detail || `Error ${res.status}`, "error"); return; }
 
-    if (!res.ok) {
-      showStatus(data.detail || `Error ${res.status}`, "error");
-      return;
-    }
-
-    showStatus(
-      `${data.message}` + (data.log_file ? ` — log: ${data.log_file}` : ""),
-      "success"
-    );
-
+    showStatus(`${data.message}` + (data.log_file ? ` — log: ${data.log_file}` : ""), "success");
     await scan();
     await loadLogs();
   } catch (err) {
@@ -194,11 +177,7 @@ async function undo() {
       body: JSON.stringify({ log_file: latestUndoableLog }),
     });
     const data = await res.json();
-
-    if (!res.ok) {
-      showStatus(data.detail || `Error ${res.status}`, "error");
-      return;
-    }
+    if (!res.ok) { showStatus(data.detail || `Error ${res.status}`, "error"); return; }
 
     const errCount = (data.errors || []).length;
     const kind = errCount > 0 ? "error" : "success";
@@ -207,7 +186,6 @@ async function undo() {
       (errCount > 0 ? `, ${errCount} error(s)` : ""),
       kind
     );
-
     await scan();
     await loadLogs();
   } catch (err) {
@@ -221,7 +199,6 @@ async function undo() {
 
 function renderPlan(plan) {
   els.summaryFolder.textContent = plan.folder;
-
   const parts = [`${plan.total} file${plan.total === 1 ? "" : "s"}`];
   if (plan.renamed > 0) parts.push(`${plan.renamed} renamed`);
   if (plan.skipped.length > 0) parts.push(`${plan.skipped.length} skipped`);
@@ -253,6 +230,85 @@ function renderPlan(plan) {
   els.previewBody.innerHTML = rows.join("");
 }
 
+// ---------- watch ----------
+
+function renderWatch(status) {
+  const watching = status.watching;
+  els.watchBadge.textContent = watching ? "ON" : "OFF";
+  els.watchBadge.className = `watch-badge ${watching ? "on" : "off"}`;
+
+  els.watchStartBtn.disabled = watching;
+  els.watchStopBtn.disabled = !watching;
+
+  if (watching) {
+    els.watchStatus.textContent =
+      `Watching: ${status.folder}  ·  mode: ${status.mode}  ·  started ${status.started_at}  ·  ${status.total} file(s) organized`;
+    els.watchStatus.classList.remove("hidden");
+  } else {
+    els.watchStatus.classList.add("hidden");
+  }
+
+  if (status.recent_runs && status.recent_runs.length > 0) {
+    els.watchRuns.classList.remove("hidden");
+    els.watchRunsList.innerHTML = status.recent_runs.slice().reverse().map(r => `
+      <li><span class="time">${escapeHtml(r.time)}</span>${escapeHtml(r.file)}<span class="cat">→ ${escapeHtml(r.category)}</span></li>
+    `).join("");
+  } else {
+    els.watchRuns.classList.add("hidden");
+  }
+}
+
+async function refreshWatch() {
+  try {
+    const res = await fetch("/api/watch/status");
+    const data = await res.json();
+    renderWatch(data);
+  } catch {}
+}
+
+async function watchStart() {
+  const path = els.folder.value.trim();
+  if (!path) { showStatus("Enter a folder path first.", "error"); return; }
+  els.watchStartBtn.disabled = true;
+  try {
+    const res = await fetch("/api/watch/start", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ path, mode: currentMode }),
+    });
+    const data = await res.json();
+    if (!res.ok) { showStatus(data.detail || `Error ${res.status}`, "error"); return; }
+    renderWatch(data);
+    startWatchPolling();
+  } catch (err) {
+    showStatus(`Network error: ${err.message}`, "error");
+  }
+}
+
+async function watchStop() {
+  els.watchStopBtn.disabled = true;
+  try {
+    const res = await fetch("/api/watch/stop", { method: "POST" });
+    const data = await res.json();
+    renderWatch(data);
+    stopWatchPolling();
+  } catch (err) {
+    showStatus(`Network error: ${err.message}`, "error");
+  }
+}
+
+function startWatchPolling() {
+  stopWatchPolling();
+  watchPollTimer = setInterval(refreshWatch, 2000);
+}
+
+function stopWatchPolling() {
+  if (watchPollTimer) { clearInterval(watchPollTimer); watchPollTimer = null; }
+}
+
+els.watchStartBtn.addEventListener("click", watchStart);
+els.watchStopBtn.addEventListener("click", watchStop);
+
 // ---------- rules editor ----------
 
 async function loadRules() {
@@ -272,7 +328,7 @@ function renderRules(rules) {
     return;
   }
 
-  const html = entries.map(([cat, exts]) => `
+  els.rulesList.innerHTML = entries.map(([cat, exts]) => `
     <div class="rules-row" data-category="${escapeHtml(cat)}">
       <div class="rules-cat">${escapeHtml(cat)}</div>
       <div class="rules-exts">
@@ -288,8 +344,6 @@ function renderRules(rules) {
       </div>
     </div>
   `).join("");
-
-  els.rulesList.innerHTML = html;
 }
 
 async function apiPost(url, body) {
@@ -299,9 +353,7 @@ async function apiPost(url, body) {
     body: JSON.stringify(body),
   });
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) {
-    throw new Error(data.detail || `Error ${res.status}`);
-  }
+  if (!res.ok) throw new Error(data.detail || `Error ${res.status}`);
   return data;
 }
 
@@ -311,13 +363,10 @@ els.rulesList.addEventListener("click", async (e) => {
   const category = row.dataset.category;
 
   if (e.target.classList.contains("chip-x")) {
-    const extension = e.target.dataset.ext;
     try {
-      await apiPost("/api/rules/remove-extension", { category, extension });
+      await apiPost("/api/rules/remove-extension", { category, extension: e.target.dataset.ext });
       await loadRules();
-    } catch (err) {
-      showStatus(`Rules: ${err.message}`, "error");
-    }
+    } catch (err) { showStatus(`Rules: ${err.message}`, "error"); }
     return;
   }
 
@@ -328,9 +377,7 @@ els.rulesList.addEventListener("click", async (e) => {
     try {
       await apiPost("/api/rules/add-extension", { category, extension: value });
       await loadRules();
-    } catch (err) {
-      showStatus(`Rules: ${err.message}`, "error");
-    }
+    } catch (err) { showStatus(`Rules: ${err.message}`, "error"); }
     return;
   }
 
@@ -339,35 +386,25 @@ els.rulesList.addEventListener("click", async (e) => {
     try {
       await apiPost("/api/rules/remove-category", { name: category });
       await loadRules();
-    } catch (err) {
-      showStatus(`Rules: ${err.message}`, "error");
-    }
+    } catch (err) { showStatus(`Rules: ${err.message}`, "error"); }
   }
 });
 
 els.rulesList.addEventListener("keydown", async (e) => {
-  if (e.key !== "Enter") return;
-  if (!e.target.classList.contains("ext-input")) return;
+  if (e.key !== "Enter" || !e.target.classList.contains("ext-input")) return;
   e.preventDefault();
-  const row = e.target.closest(".rules-row");
-  const addBtn = row.querySelector(".ext-add-btn");
-  addBtn.click();
+  e.target.closest(".rules-row").querySelector(".ext-add-btn").click();
 });
 
 els.addCategoryBtn.addEventListener("click", async () => {
   const name = els.newCategory.value.trim();
-  if (!name) {
-    showStatus("Enter a category name.", "error");
-    return;
-  }
+  if (!name) { showStatus("Enter a category name.", "error"); return; }
   try {
     await apiPost("/api/rules/add-category", { name });
     els.newCategory.value = "";
     await loadRules();
     showStatus(`Category "${name}" added.`, "success");
-  } catch (err) {
-    showStatus(`Rules: ${err.message}`, "error");
-  }
+  } catch (err) { showStatus(`Rules: ${err.message}`, "error"); }
 });
 
 els.newCategory.addEventListener("keydown", (e) => {
@@ -393,10 +430,14 @@ els.scanBtn.addEventListener("click", scan);
 els.organizeBtn.addEventListener("click", organize);
 els.undoBtn.addEventListener("click", undo);
 els.clearBtn.addEventListener("click", clear);
-els.folder.addEventListener("keydown", (e) => {
-  if (e.key === "Enter") scan();
-});
+els.folder.addEventListener("keydown", (e) => { if (e.key === "Enter") scan(); });
 
 // Initial state
 setMode("extension");
 loadLogs();
+refreshWatch().then(() => {
+  // If already watching (server restart), start polling
+  fetch("/api/watch/status").then(r => r.json()).then(d => {
+    if (d.watching) startWatchPolling();
+  });
+});

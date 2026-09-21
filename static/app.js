@@ -60,6 +60,10 @@ const els = {
   newSkipPrefix:    $("#new-skip-prefix"),
   addSkipPrefix:    $("#add-skip-prefix"),
   settingsSaved:    $("#settings-saved"),
+  // backup
+  exportConfigBtn:  $("#export-config-btn"),
+  importFileInput:  $("#import-file-input"),
+  resetConfigBtn:   $("#reset-config-btn"),
 };
 
 let latestUndoableLog = null;
@@ -622,7 +626,6 @@ els.schedList.addEventListener("click", async (e) => {
 
 els.addScheduleBtn.addEventListener("click", addSchedule);
 
-// Auto-refresh schedules every 15 seconds so "next run" stays current
 setInterval(() => {
   if (!document.hidden) loadSchedules();
 }, 15000);
@@ -742,6 +745,100 @@ els.toggleSettings.addEventListener("click", () => {
   els.toggleSettings.textContent = settingsVisible ? "Hide" : "Show";
   if (settingsVisible) loadSettings();
 });
+
+// ---------- backup / restore ----------
+
+function getImportStrategy() {
+  const checked = document.querySelector('input[name="import-strategy"]:checked');
+  return checked ? checked.value : "replace";
+}
+
+async function exportConfig() {
+  try {
+    // Trigger a download — the server sets Content-Disposition: attachment
+    window.location.href = "/api/config/export";
+    showStatus("Downloading config bundle...", "info");
+  } catch (err) {
+    showStatus(`Export failed: ${err.message}`, "error");
+  }
+}
+
+async function importConfigFile(file) {
+  if (!file) return;
+
+  const strategy = getImportStrategy();
+
+  let bundle;
+  try {
+    const text = await file.text();
+    bundle = JSON.parse(text);
+  } catch (err) {
+    showStatus(`Invalid JSON file: ${err.message}`, "error");
+    return;
+  }
+
+  const confirmed = confirm(
+    `Import "${file.name}" with strategy: ${strategy.toUpperCase()}?\n\n` +
+    (strategy === "replace"
+      ? "This will OVERWRITE your current rules, settings, and schedules."
+      : "Categories and schedules will be merged (existing preserved).")
+  );
+  if (!confirmed) return;
+
+  try {
+    const res = await fetch("/api/config/import", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ bundle, strategy }),
+    });
+    const data = await res.json();
+    if (!res.ok) { showStatus(data.detail || `Error ${res.status}`, "error"); return; }
+
+    const a = data.applied;
+    showStatus(
+      `Imported — ${a.rules} categories, settings ${a.settings ? "updated" : "skipped"}, ${a.schedules} schedule(s)`,
+      "success"
+    );
+
+    // Refresh everything that depends on config
+    await loadSettings();
+    await loadRules();
+    await loadSchedules();
+  } catch (err) {
+    showStatus(`Import failed: ${err.message}`, "error");
+  }
+}
+
+async function resetConfig() {
+  const confirmed = confirm(
+    "Reset rules, settings, and schedules to defaults?\n\n" +
+    "This does NOT touch your files or history logs."
+  );
+  if (!confirmed) return;
+
+  try {
+    const res = await fetch("/api/config/reset", { method: "POST" });
+    const data = await res.json();
+    if (!res.ok) { showStatus(data.detail || `Error ${res.status}`, "error"); return; }
+
+    showStatus("Config reset to defaults.", "success");
+    await loadSettings();
+    await loadRules();
+    await loadSchedules();
+  } catch (err) {
+    showStatus(`Reset failed: ${err.message}`, "error");
+  }
+}
+
+els.exportConfigBtn.addEventListener("click", exportConfig);
+
+els.importFileInput.addEventListener("change", async (e) => {
+  const file = e.target.files && e.target.files[0];
+  await importConfigFile(file);
+  e.target.value = ""; // allow re-selecting the same file
+});
+
+els.resetConfigBtn.addEventListener("click", resetConfig);
 
 // ---------- rules editor ----------
 

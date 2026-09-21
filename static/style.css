@@ -534,6 +534,67 @@ tr.renamed td.destination::after { content: " *"; }
   font-family: ui-monospace, Consolas, monospace;
 }
 
+/* Backup panel */
+
+.backup-panel {
+  margin-top: 40px; padding: 20px;
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+.backup-header {
+  display: flex; align-items: center; gap: 12px; margin-bottom: 8px;
+}
+
+.backup-header h2 { font-size: 18px; font-weight: 600; }
+
+.backup-hint { color: var(--muted); font-size: 13px; margin-bottom: 16px; }
+
+.backup-controls {
+  display: flex; gap: 10px; flex-wrap: wrap;
+  margin-bottom: 16px;
+}
+
+.file-input-label {
+  display: inline-block;
+  cursor: pointer;
+}
+
+.button-like {
+  display: inline-block;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  color: var(--muted);
+  padding: 12px 20px;
+  border-radius: var(--radius);
+  font-size: 14px;
+  font-weight: 500;
+  font-family: inherit;
+  transition: background 0.15s, border-color 0.15s;
+}
+
+.file-input-label:hover .button-like {
+  background: #262b3a;
+  border-color: #3a4056;
+}
+
+.backup-options {
+  display: flex; flex-direction: column; gap: 8px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+
+.backup-radio {
+  display: flex; align-items: center; gap: 10px;
+  font-size: 13px;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.backup-radio input { cursor: pointer; }
+
+.backup-radio span { color: var(--text); }
+
 /* Rules panel */
 
 .rules-panel {

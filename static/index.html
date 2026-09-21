@@ -184,6 +184,36 @@
       </div>
     </section>
 
+    <section class="backup-panel">
+      <div class="backup-header">
+        <h2>Backup &amp; Restore</h2>
+      </div>
+      <p class="backup-hint">
+        Export rules, settings, and schedules as a single JSON file. Nothing about
+        your actual files is included — only configuration.
+      </p>
+
+      <div class="backup-controls">
+        <button id="export-config-btn" class="primary">Export config</button>
+        <label class="file-input-label">
+          <input id="import-file-input" type="file" accept="application/json,.json" hidden />
+          <span class="button-like secondary">Import config</span>
+        </label>
+        <button id="reset-config-btn" class="danger">Reset to defaults</button>
+      </div>
+
+      <div class="backup-options">
+        <label class="backup-radio">
+          <input type="radio" name="import-strategy" value="replace" checked />
+          <span>Replace — overwrite current config entirely</span>
+        </label>
+        <label class="backup-radio">
+          <input type="radio" name="import-strategy" value="merge" />
+          <span>Merge — add categories, keep existing; skip duplicate schedule folders</span>
+        </label>
+      </div>
+    </section>
+
     <section id="rules-panel" class="rules-panel">
       <div class="rules-header">
         <h2>Rules</h2>

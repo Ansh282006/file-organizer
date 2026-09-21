@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>File Organizer</title>
+  <link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+  <main>
+    <header>
+      <h1>📁 File Organizer</h1>
+      <p class="subtitle">Preview what would move — nothing happens until you click Organize.</p>
+    </header>
+
+    <section class="controls">
+      <input
+        id="folder-input"
+        type="text"
+        placeholder="C:\Users\anshb\Desktop\Hack\Project\file-organizer\test-folder"
+        spellcheck="false"
+        autocomplete="off"
+      />
+      <button id="scan-btn">Scan</button>
+    </section>
+
+    <section id="status" class="status hidden"></section>
+
+    <section id="summary" class="summary hidden">
+      <span id="summary-folder"></span>
+      <span id="summary-counts"></span>
+    </section>
+
+    <section id="preview" class="preview hidden">
+      <table>
+        <thead>
+          <tr>
+            <th>File</th>
+            <th>→</th>
+            <th>Destination</th>
+            <th>Category</th>
+          </tr>
+        </thead>
+        <tbody id="preview-body"></tbody>
+      </table>
+    </section>
+
+    <section id="actions" class="actions hidden">
+      <button id="organize-btn" class="primary" disabled>Organize (coming in Step 6)</button>
+      <button id="clear-btn" class="secondary">Clear</button>
+    </section>
+  </main>
+
+  <script src="/app.js"></script>
+</body>
+</html>

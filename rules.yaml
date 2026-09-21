@@ -1,0 +1,20 @@
+Images:
+  extensions: [.jpg, .jpeg, .png, .gif, .webp, .heic, .bmp, .svg]
+
+Documents:
+  extensions: [.pdf, .docx, .doc, .txt, .md, .xlsx, .xls, .pptx, .csv]
+
+Archives:
+  extensions: [.zip, .tar, .gz, .rar, .7z, .bz2]
+
+Media:
+  extensions: [.mp4, .mov, .avi, .mkv, .mp3, .wav, .flac, .m4a]
+
+Code:
+  extensions: [.py, .js, .ts, .jsx, .tsx, .go, .rs, .java, .c, .cpp, .html, .css, .json, .yaml, .yml]
+
+Installers:
+  extensions: [.exe, .msi, .dmg, .pkg, .deb, .rpm]
+
+Fonts:
+  extensions: [.ttf, .otf, .woff, .woff2]

@@ -51,7 +51,8 @@ class Plan:
 
 # ---------- rules: reading ----------
 
-def load_rules(path: Path = RULES_FILE) -> list[Rule]:
+def load_rules(path: Path | None = None) -> list[Rule]:
+    path = path or RULES_FILE
     raw = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
     rules: list[Rule] = []
     for name, cfg in raw.items():
@@ -70,11 +71,13 @@ def category_for(suffix: str, rules: list[Rule]) -> str:
 
 # ---------- rules: writing ----------
 
-def _load_rules_raw(path: Path = RULES_FILE) -> dict:
+def _load_rules_raw(path: Path | None = None) -> dict:
+    path = path or RULES_FILE
     return yaml.safe_load(path.read_text(encoding="utf-8")) or {}
 
 
-def _write_rules_raw(data: dict, path: Path = RULES_FILE) -> None:
+def _write_rules_raw(data: dict, path: Path | None = None) -> None:
+    path = path or RULES_FILE
     path.write_text(
         yaml.dump(data, sort_keys=False, default_flow_style=False),
         encoding="utf-8",

@@ -56,7 +56,7 @@
 
     <section id="actions" class="actions hidden">
       <button id="organize-btn" class="primary" disabled>Organize</button>
-      <button id="undo-btn" class="secondary" disabled>Undo</button>
+      <button id="undo-btn" class="secondary" disabled>Undo latest</button>
       <button id="clear-btn" class="secondary">Clear</button>
     </section>
 
@@ -79,6 +79,31 @@
         <div class="watch-runs-title">Recent runs</div>
         <ul id="watch-runs-list"></ul>
       </div>
+    </section>
+
+    <section class="history-panel">
+      <div class="history-header">
+        <h2>History</h2>
+        <div class="history-header-right">
+          <span id="history-count" class="history-count"></span>
+          <button id="history-refresh" class="secondary">Refresh</button>
+        </div>
+      </div>
+      <p class="history-hint">Every organize run, newest first. Undo any run that hasn't been rolled back yet.</p>
+      <div id="history-empty" class="history-empty hidden">No runs yet. Organize a folder to see history here.</div>
+      <table id="history-table" class="history-table hidden">
+        <thead>
+          <tr>
+            <th>When</th>
+            <th>Files</th>
+            <th>Mode</th>
+            <th>Folder</th>
+            <th>Status</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody id="history-body"></tbody>
+      </table>
     </section>
 
     <section id="rules-panel" class="rules-panel">

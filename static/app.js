@@ -28,6 +28,12 @@ const els = {
   watchStatus:   $("#watch-status"),
   watchRuns:     $("#watch-runs"),
   watchRunsList: $("#watch-runs-list"),
+  // history
+  historyBody:   $("#history-body"),
+  historyTable:  $("#history-table"),
+  historyEmpty:  $("#history-empty"),
+  historyCount:  $("#history-count"),
+  historyRefresh:$("#history-refresh"),
 };
 
 let latestUndoableLog = null;
@@ -75,13 +81,16 @@ function setMode(mode) {
 
 els.modeBtns.forEach(btn => btn.addEventListener("click", () => setMode(btn.dataset.mode)));
 
-// ---------- logs + undo ----------
+// ---------- logs (also refreshes history) ----------
 
 async function loadLogs() {
   try {
     const res = await fetch("/api/logs");
     const data = await res.json();
-    const undoable = (data.logs || []).find(l => !l.undone);
+    const logs = data.logs || [];
+
+    // Latest undoable → powers the "Undo latest" button
+    const undoable = logs.find(l => !l.undone);
     if (undoable) {
       latestUndoableLog = undoable.file;
       els.undoBtn.disabled = false;
@@ -93,8 +102,64 @@ async function loadLogs() {
       els.undoBtn.disabled = true;
       els.lastRun.classList.add("hidden");
     }
+
+    renderHistory(logs);
   } catch {}
 }
+
+// ---------- history ----------
+
+function formatTimestamp(ts) {
+  // ts is "YYYYMMDD_HHMMSS"
+  if (!ts || ts.length !== 15) return ts || "";
+  const y = ts.slice(0,4), mo = ts.slice(4,6), d = ts.slice(6,8);
+  const h = ts.slice(9,11), mi = ts.slice(11,13), s = ts.slice(13,15);
+  return `${y}-${mo}-${d} ${h}:${mi}:${s}`;
+}
+
+function renderHistory(logs) {
+  els.historyCount.textContent = logs.length ? `${logs.length} run${logs.length === 1 ? "" : "s"}` : "";
+
+  if (logs.length === 0) {
+    els.historyTable.classList.add("hidden");
+    els.historyEmpty.classList.remove("hidden");
+    return;
+  }
+
+  els.historyEmpty.classList.add("hidden");
+  els.historyTable.classList.remove("hidden");
+
+  els.historyBody.innerHTML = logs.map(log => `
+    <tr class="${log.undone ? "done" : ""}" data-log="${escapeHtml(log.file)}">
+      <td>${escapeHtml(formatTimestamp(log.timestamp))}</td>
+      <td>${log.total}</td>
+      <td class="mode-cell">${escapeHtml(log.mode || "extension")}</td>
+      <td class="folder-cell" title="${escapeHtml(log.folder)}">${escapeHtml(log.folder)}</td>
+      <td class="status-cell">
+        <span class="status-pill ${log.undone ? "done" : "active"}">
+          ${log.undone ? "UNDONE" : "ACTIVE"}
+        </span>
+      </td>
+      <td class="actions-cell">
+        ${log.undone
+          ? `<button class="secondary tiny" disabled>Undo</button>`
+          : `<button class="danger tiny history-undo-btn" data-log="${escapeHtml(log.file)}">Undo</button>`}
+      </td>
+    </tr>
+  `).join("");
+}
+
+// Delegated click for per-row Undo buttons
+els.historyBody.addEventListener("click", async (e) => {
+  const btn = e.target.closest(".history-undo-btn");
+  if (!btn) return;
+  const logFile = btn.dataset.log;
+  await undoLog(logFile);
+});
+
+els.historyRefresh.addEventListener("click", () => {
+  loadLogs();
+});
 
 // ---------- scan ----------
 
@@ -128,7 +193,7 @@ async function organize() {
   if (!path) return;
 
   const confirmed = confirm(
-    `Move all files in:\n${path}\n\nMode: ${currentMode}\n\nYou can undo this from the Undo button. Continue?`
+    `Move all files in:\n${path}\n\nMode: ${currentMode}\n\nYou can undo this from the History panel. Continue?`
   );
   if (!confirmed) return;
 
@@ -156,25 +221,20 @@ async function organize() {
   }
 }
 
-// ---------- undo ----------
+// ---------- undo (shared by latest + history rows) ----------
 
-async function undo() {
-  if (!latestUndoableLog) return;
-
+async function undoLog(logFile) {
   const confirmed = confirm(
-    `Undo the last organize run?\n${latestUndoableLog}\n\nAll moved files will be restored.`
+    `Undo this run?\n${logFile}\n\nAll moved files will be restored.`
   );
   if (!confirmed) return;
 
-  els.undoBtn.disabled = true;
-  els.undoBtn.textContent = "Undoing...";
   hideStatus();
-
   try {
     const res = await fetch("/api/undo", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ log_file: latestUndoableLog }),
+      body: JSON.stringify({ log_file: logFile }),
     });
     const data = await res.json();
     if (!res.ok) { showStatus(data.detail || `Error ${res.status}`, "error"); return; }
@@ -190,9 +250,12 @@ async function undo() {
     await loadLogs();
   } catch (err) {
     showStatus(`Network error: ${err.message}`, "error");
-  } finally {
-    els.undoBtn.textContent = "Undo";
   }
+}
+
+async function undoLatest() {
+  if (!latestUndoableLog) return;
+  await undoLog(latestUndoableLog);
 }
 
 // ---------- plan rendering ----------
@@ -428,7 +491,7 @@ function clear() {
 
 els.scanBtn.addEventListener("click", scan);
 els.organizeBtn.addEventListener("click", organize);
-els.undoBtn.addEventListener("click", undo);
+els.undoBtn.addEventListener("click", undoLatest);
 els.clearBtn.addEventListener("click", clear);
 els.folder.addEventListener("keydown", (e) => { if (e.key === "Enter") scan(); });
 
@@ -436,7 +499,6 @@ els.folder.addEventListener("keydown", (e) => { if (e.key === "Enter") scan(); }
 setMode("extension");
 loadLogs();
 refreshWatch().then(() => {
-  // If already watching (server restart), start polling
   fetch("/api/watch/status").then(r => r.json()).then(d => {
     if (d.watching) startWatchPolling();
   });

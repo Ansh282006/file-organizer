@@ -40,6 +40,14 @@ const els = {
   dupesBadge:    $("#dupes-badge"),
   dupesStatus:   $("#dupes-status"),
   dupesGroups:   $("#dupes-groups"),
+  // schedules
+  schedBadge:       $("#scheduler-badge"),
+  schedFolder:      $("#sched-folder"),
+  schedMode:        $("#sched-mode"),
+  schedInterval:    $("#sched-interval"),
+  addScheduleBtn:   $("#add-schedule-btn"),
+  schedEmpty:       $("#schedules-empty"),
+  schedList:        $("#schedules-list"),
   // settings
   toggleSettings:   $("#toggle-settings"),
   settingsBody:     $("#settings-body"),
@@ -500,6 +508,125 @@ async function quarantineDuplicates() {
 els.findDupesBtn.addEventListener("click", findDuplicates);
 els.quarantineBtn.addEventListener("click", quarantineDuplicates);
 
+// ---------- schedules ----------
+
+async function loadSchedules() {
+  try {
+    const res = await fetch("/api/schedules");
+    const data = await res.json();
+    renderSchedules(data.schedules || [], data.scheduler_running);
+  } catch {}
+}
+
+function renderSchedules(schedules, running) {
+  els.schedBadge.textContent = running ? "RUNNING" : "STOPPED";
+  els.schedBadge.className = `scheduler-badge ${running ? "on" : "off"}`;
+
+  if (schedules.length === 0) {
+    els.schedEmpty.classList.remove("hidden");
+    els.schedList.innerHTML = "";
+    return;
+  }
+
+  els.schedEmpty.classList.add("hidden");
+  els.schedList.innerHTML = schedules.map(s => {
+    const status = s.last_error
+      ? `<div class="schedule-error">Last error: ${escapeHtml(s.last_error)}</div>`
+      : s.last_run
+        ? `<div class="schedule-meta">Last run: ${escapeHtml(s.last_run)} · ${s.last_moved} file(s) moved · next: ${escapeHtml(s.next_run || "—")}</div>`
+        : `<div class="schedule-meta">Never run · next: ${escapeHtml(s.next_run || "—")}</div>`;
+
+    return `
+      <div class="schedule-item ${s.enabled ? "" : "disabled"}" data-id="${escapeHtml(s.id)}">
+        <div class="schedule-row">
+          <span class="schedule-folder" title="${escapeHtml(s.folder)}">${escapeHtml(s.folder)}</span>
+          <div class="schedule-actions">
+            <button class="secondary tiny sched-run" data-id="${escapeHtml(s.id)}">Run now</button>
+            <button class="secondary tiny sched-toggle" data-id="${escapeHtml(s.id)}" data-enabled="${s.enabled}">${s.enabled ? "Disable" : "Enable"}</button>
+            <button class="danger tiny sched-delete" data-id="${escapeHtml(s.id)}">Delete</button>
+          </div>
+        </div>
+        <div class="schedule-meta">${escapeHtml(s.mode)} · every ${s.interval_minutes} min · ${s.enabled ? "enabled" : "disabled"}</div>
+        ${status}
+      </div>
+    `;
+  }).join("");
+}
+
+async function addSchedule() {
+  const folder = els.schedFolder.value.trim() || els.folder.value.trim();
+  if (!folder) { showStatus("Enter a folder path for the schedule.", "error"); return; }
+
+  const interval = parseInt(els.schedInterval.value, 10);
+  if (!interval || interval < 1) { showStatus("Interval must be at least 1 minute.", "error"); return; }
+
+  els.addScheduleBtn.disabled = true;
+  try {
+    const res = await fetch("/api/schedules", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        folder,
+        mode: els.schedMode.value,
+        interval_minutes: interval,
+      }),
+    });
+    const data = await res.json();
+    if (!res.ok) { showStatus(data.detail || `Error ${res.status}`, "error"); return; }
+    showStatus(`Schedule added for ${folder}`, "success");
+    els.schedFolder.value = "";
+    await loadSchedules();
+  } catch (err) {
+    showStatus(`Network error: ${err.message}`, "error");
+  } finally {
+    els.addScheduleBtn.disabled = false;
+  }
+}
+
+els.schedList.addEventListener("click", async (e) => {
+  const runBtn = e.target.closest(".sched-run");
+  const toggleBtn = e.target.closest(".sched-toggle");
+  const delBtn = e.target.closest(".sched-delete");
+  if (!runBtn && !toggleBtn && !delBtn) return;
+
+  const target = runBtn || toggleBtn || delBtn;
+  const id = target.dataset.id;
+
+  try {
+    if (runBtn) {
+      const res = await fetch(`/api/schedules/${id}/run`, { method: "POST" });
+      const data = await res.json();
+      if (!res.ok) { showStatus(data.detail || `Error ${res.status}`, "error"); return; }
+      showStatus(`Ran schedule — ${data.schedule.last_moved} file(s) moved`, "success");
+      await loadLogs();
+    } else if (toggleBtn) {
+      const newEnabled = toggleBtn.dataset.enabled !== "true";
+      const res = await fetch(`/api/schedules/${id}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ enabled: newEnabled }),
+      });
+      const data = await res.json();
+      if (!res.ok) { showStatus(data.detail || `Error ${res.status}`, "error"); return; }
+    } else if (delBtn) {
+      if (!confirm("Delete this schedule?")) return;
+      const res = await fetch(`/api/schedules/${id}`, { method: "DELETE" });
+      const data = await res.json();
+      if (!res.ok) { showStatus(data.detail || `Error ${res.status}`, "error"); return; }
+    }
+    await loadSchedules();
+  } catch (err) {
+    showStatus(`Network error: ${err.message}`, "error");
+  }
+});
+
+els.addScheduleBtn.addEventListener("click", addSchedule);
+
+// Auto-refresh schedules every 15 seconds so "next run" stays current
+setInterval(() => {
+  if (!document.hidden) loadSchedules();
+}, 15000);
+
 // ---------- settings ----------
 
 async function loadSettings() {
@@ -749,6 +876,7 @@ async function init() {
   dateFormatOptions = s?.date_format_options || [];
 
   loadLogs();
+  loadSchedules();
   refreshWatch().then(() => {
     fetch("/api/watch/status").then(r => r.json()).then(d => {
       if (d.watching) startWatchPolling();

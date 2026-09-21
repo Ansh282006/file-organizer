@@ -111,6 +111,31 @@
       <div id="dupes-groups" class="dupes-groups hidden"></div>
     </section>
 
+    <section class="schedules-panel">
+      <div class="schedules-header">
+        <h2>Schedules</h2>
+        <span id="scheduler-badge" class="scheduler-badge off">STOPPED</span>
+      </div>
+      <p class="schedules-hint">
+        Run organize on a folder automatically, every N minutes. Uses the folder above
+        if you leave the field empty.
+      </p>
+
+      <div class="schedules-controls">
+        <input id="sched-folder" type="text" class="ext-input-wide" placeholder="Folder (or leave blank to use folder above)" spellcheck="false" />
+        <select id="sched-mode" class="settings-input">
+          <option value="extension">Extension</option>
+          <option value="date">Date</option>
+        </select>
+        <input id="sched-interval" type="number" class="ext-input" min="1" value="60" />
+        <span class="schedules-unit">min</span>
+        <button id="add-schedule-btn" class="primary">Add schedule</button>
+      </div>
+
+      <div id="schedules-empty" class="schedules-empty">No schedules yet.</div>
+      <div id="schedules-list" class="schedules-list"></div>
+    </section>
+
     <section class="settings-panel">
       <div class="settings-header">
         <h2>Settings</h2>

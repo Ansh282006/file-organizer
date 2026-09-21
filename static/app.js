@@ -34,6 +34,12 @@ const els = {
   historyEmpty:  $("#history-empty"),
   historyCount:  $("#history-count"),
   historyRefresh:$("#history-refresh"),
+  // duplicates
+  findDupesBtn:  $("#find-dupes-btn"),
+  quarantineBtn: $("#quarantine-dupes-btn"),
+  dupesBadge:    $("#dupes-badge"),
+  dupesStatus:   $("#dupes-status"),
+  dupesGroups:   $("#dupes-groups"),
   // settings
   toggleSettings:   $("#toggle-settings"),
   settingsBody:     $("#settings-body"),
@@ -55,6 +61,7 @@ let currentMode = "extension";
 let watchPollTimer = null;
 let currentSettings = null;
 let dateFormatOptions = [];
+let lastDupeResult = null;
 
 const MODE_HINTS = {
   extension: "Files go to folders like Images/, Documents/, Code/",
@@ -370,6 +377,117 @@ function stopWatchPolling() {
 els.watchStartBtn.addEventListener("click", watchStart);
 els.watchStopBtn.addEventListener("click", watchStop);
 
+// ---------- duplicates ----------
+
+function formatBytes(n) {
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+  if (n < 1024 * 1024 * 1024) return `${(n / (1024 * 1024)).toFixed(1)} MB`;
+  return `${(n / (1024 * 1024 * 1024)).toFixed(2)} GB`;
+}
+
+function renderDuplicates(result) {
+  lastDupeResult = result;
+
+  if (result.total_groups === 0) {
+    els.dupesBadge.textContent = "CLEAN";
+    els.dupesBadge.className = "dupes-badge clean";
+    els.dupesStatus.textContent =
+      `Scanned ${result.total_files} file(s) — no duplicates found.`;
+    els.dupesStatus.classList.remove("hidden");
+    els.dupesGroups.classList.add("hidden");
+    els.quarantineBtn.disabled = true;
+    return;
+  }
+
+  els.dupesBadge.textContent = `${result.total_groups} GROUP${result.total_groups === 1 ? "" : "S"}`;
+  els.dupesBadge.className = "dupes-badge found";
+  els.dupesStatus.textContent =
+    `Scanned ${result.total_files} file(s) — ${result.total_groups} duplicate group(s), ${formatBytes(result.wasted_bytes)} wasted.`;
+  els.dupesStatus.classList.remove("hidden");
+  els.quarantineBtn.disabled = false;
+
+  const html = result.groups.map(g => `
+    <div class="dupe-group">
+      <div class="dupe-group-header">
+        <span>${g.files.length} copies · ${formatBytes(g.size)} each</span>
+        <span class="waste-tag">${formatBytes(g.wasted_bytes)} wasted</span>
+      </div>
+      ${g.files.map((f, i) => `
+        <div class="dupe-file ${i === 0 ? "kept" : "moved"}">
+          <span class="path" title="${escapeHtml(f.path)}">${escapeHtml(f.rel_path)}</span>
+          <span class="size">${formatBytes(f.size)}</span>
+        </div>
+      `).join("")}
+    </div>
+  `).join("");
+
+  els.dupesGroups.innerHTML = html;
+  els.dupesGroups.classList.remove("hidden");
+}
+
+async function findDuplicates() {
+  const path = els.folder.value.trim();
+  if (!path) { showStatus("Enter a folder path first.", "error"); return; }
+
+  els.findDupesBtn.disabled = true;
+  els.findDupesBtn.textContent = "Scanning...";
+  els.dupesStatus.classList.add("hidden");
+  els.dupesGroups.classList.add("hidden");
+  els.quarantineBtn.disabled = true;
+
+  try {
+    const res = await fetch(`/api/duplicates?path=${encodeURIComponent(path)}`);
+    const data = await res.json();
+    if (!res.ok) { showStatus(data.detail || `Error ${res.status}`, "error"); return; }
+    renderDuplicates(data);
+  } catch (err) {
+    showStatus(`Network error: ${err.message}`, "error");
+  } finally {
+    els.findDupesBtn.disabled = false;
+    els.findDupesBtn.textContent = "Find duplicates";
+  }
+}
+
+async function quarantineDuplicates() {
+  const path = els.folder.value.trim();
+  if (!path || !lastDupeResult || lastDupeResult.total_groups === 0) return;
+
+  const moved = lastDupeResult.groups.reduce((n, g) => n + (g.files.length - 1), 0);
+  const confirmed = confirm(
+    `Move ${moved} duplicate file(s) into _duplicates/?\n\n` +
+    `The newest copy in each group is kept. Nothing is deleted.\n` +
+    `You can undo this from the History panel.`
+  );
+  if (!confirmed) return;
+
+  els.quarantineBtn.disabled = true;
+  els.quarantineBtn.textContent = "Moving...";
+  hideStatus();
+
+  try {
+    const res = await fetch("/api/duplicates/quarantine", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ path }),
+    });
+    const data = await res.json();
+    if (!res.ok) { showStatus(data.detail || `Error ${res.status}`, "error"); return; }
+
+    showStatus(`${data.message}` + (data.log_file ? ` — log: ${data.log_file}` : ""), "success");
+    await findDuplicates();
+    await loadLogs();
+  } catch (err) {
+    showStatus(`Network error: ${err.message}`, "error");
+  } finally {
+    els.quarantineBtn.disabled = false;
+    els.quarantineBtn.textContent = "Quarantine duplicates";
+  }
+}
+
+els.findDupesBtn.addEventListener("click", findDuplicates);
+els.quarantineBtn.addEventListener("click", quarantineDuplicates);
+
 // ---------- settings ----------
 
 async function loadSettings() {
@@ -387,21 +505,18 @@ function renderSettings() {
 
   els.setDefaultMode.value = currentSettings.default_mode || "extension";
 
-  // Date format dropdown
   const currentFmt = currentSettings.date_format;
   const known = dateFormatOptions.some(o => o.value === currentFmt);
   els.setDateFormat.innerHTML = dateFormatOptions.map(o =>
     `<option value="${escapeHtml(o.value)}" ${o.value === currentFmt ? "selected" : ""}>${escapeHtml(o.label)}</option>`
   ).join("");
   if (!known && currentFmt) {
-    // Add the current (custom) value so it shows up
     els.setDateFormat.insertAdjacentHTML(
       "beforeend",
       `<option value="${escapeHtml(currentFmt)}" selected>${escapeHtml(currentFmt)} (custom)</option>`
     );
   }
 
-  // Skip names
   renderChips(els.skipNamesChips, currentSettings.skip_names || [], "skip_names");
   renderChips(els.skipPrefixesChips, currentSettings.skip_prefixes || [], "skip_prefixes");
 }
@@ -447,7 +562,6 @@ els.setDateFormat.addEventListener("change", () => {
   saveSettings({ date_format: els.setDateFormat.value });
 });
 
-// Chip removal (delegated)
 els.settingsBody.addEventListener("click", async (e) => {
   const btn = e.target.closest(".skip-chip button");
   if (!btn) return;
@@ -457,7 +571,6 @@ els.settingsBody.addEventListener("click", async (e) => {
   await saveSettings({ [field]: list });
 });
 
-// Add skip name
 els.addSkipName.addEventListener("click", async () => {
   const v = els.newSkipName.value.trim();
   if (!v) return;
@@ -471,7 +584,6 @@ els.newSkipName.addEventListener("keydown", (e) => {
   if (e.key === "Enter") els.addSkipName.click();
 });
 
-// Add skip prefix
 els.addSkipPrefix.addEventListener("click", async () => {
   const v = els.newSkipPrefix.value.trim();
   if (!v) return;

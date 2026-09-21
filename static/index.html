@@ -94,6 +94,23 @@
       </table>
     </section>
 
+    <section class="dupes-panel">
+      <div class="dupes-header">
+        <h2>Duplicates</h2>
+        <span id="dupes-badge" class="dupes-badge">—</span>
+      </div>
+      <p class="dupes-hint">
+        Finds byte-identical files in the folder above. Quarantined copies go to
+        <code>_duplicates/</code> — nothing is deleted.
+      </p>
+      <div class="dupes-controls">
+        <button id="find-dupes-btn" class="primary">Find duplicates</button>
+        <button id="quarantine-dupes-btn" class="secondary" disabled>Quarantine duplicates</button>
+      </div>
+      <p id="dupes-status" class="dupes-status hidden"></p>
+      <div id="dupes-groups" class="dupes-groups hidden"></div>
+    </section>
+
     <section class="settings-panel">
       <div class="settings-header">
         <h2>Settings</h2>
@@ -113,9 +130,7 @@
 
         <div class="settings-row">
           <label class="settings-label">Date format</label>
-          <select id="set-date-format" class="settings-input">
-            <!-- populated by JS from /api/settings -->
-          </select>
+          <select id="set-date-format" class="settings-input"></select>
         </div>
 
         <div class="settings-row">

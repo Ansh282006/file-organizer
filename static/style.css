@@ -269,6 +269,93 @@ tr.renamed td.destination::after { content: " *"; }
 .status-pill.active { background: rgba(34, 197, 94, 0.15); color: #7ee2a5; border: 1px solid rgba(34, 197, 94, 0.4); }
 .status-pill.done   { background: var(--surface); color: var(--muted); border: 1px solid var(--border); }
 
+/* Duplicates panel */
+
+.dupes-panel {
+  margin-top: 40px; padding: 20px;
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+.dupes-header {
+  display: flex; align-items: center; gap: 12px; margin-bottom: 8px;
+}
+
+.dupes-header h2 { font-size: 18px; font-weight: 600; }
+
+.dupes-badge {
+  font-size: 11px; font-weight: 700; letter-spacing: 0.08em;
+  padding: 3px 10px; border-radius: 999px;
+  font-family: ui-monospace, Consolas, monospace;
+  background: var(--surface-2); color: var(--muted); border: 1px solid var(--border);
+}
+
+.dupes-badge.found {
+  background: rgba(240, 180, 41, 0.15); color: #ffd98a;
+  border-color: rgba(240, 180, 41, 0.4);
+}
+
+.dupes-badge.clean {
+  background: rgba(34, 197, 94, 0.15); color: #7ee2a5;
+  border-color: rgba(34, 197, 94, 0.4);
+}
+
+.dupes-hint { color: var(--muted); font-size: 13px; margin-bottom: 14px; }
+
+.dupes-hint code {
+  background: var(--surface-2); padding: 2px 6px;
+  border-radius: 4px; font-size: 12px;
+}
+
+.dupes-controls { display: flex; gap: 10px; margin-bottom: 12px; }
+
+.dupes-status {
+  font-size: 13px; color: var(--muted);
+  font-family: ui-monospace, Consolas, monospace;
+  margin-bottom: 12px;
+}
+
+.dupes-groups {
+  border-top: 1px solid var(--border);
+  padding-top: 12px;
+  display: flex; flex-direction: column; gap: 10px;
+}
+
+.dupe-group {
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 12px 14px;
+}
+
+.dupe-group-header {
+  display: flex; justify-content: space-between; align-items: baseline;
+  margin-bottom: 8px;
+  font-size: 12px;
+  font-family: ui-monospace, Consolas, monospace;
+  color: var(--muted);
+}
+
+.dupe-group-header .waste-tag {
+  color: var(--warn); font-weight: 600;
+}
+
+.dupe-file {
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 6px 0;
+  border-top: 1px solid var(--border);
+  font-size: 12px;
+  font-family: ui-monospace, Consolas, monospace;
+}
+
+.dupe-file:first-of-type { border-top: none; }
+
+.dupe-file .path { color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.dupe-file.kept .path::before { content: "★ "; color: #7ee2a5; }
+.dupe-file.moved .path::before { content: "→ "; color: var(--warn); }
+.dupe-file .size { color: var(--muted); flex-shrink: 0; margin-left: 12px; }
+
 /* Settings panel */
 
 .settings-panel {

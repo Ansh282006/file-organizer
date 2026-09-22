@@ -7,11 +7,25 @@
   <link rel="stylesheet" href="/style.css" />
 </head>
 <body>
+  <!-- Login overlay -->
+  <div id="login-overlay" class="login-overlay hidden">
+    <div class="login-card">
+      <h1>File Organizer</h1>
+      <p class="login-subtitle">Enter your password to continue.</p>
+      <form id="login-form">
+        <input id="login-password" type="password" class="login-input" placeholder="Password" autocomplete="current-password" />
+        <button id="login-btn" class="primary" type="submit">Sign in</button>
+        <p id="login-error" class="login-error hidden"></p>
+      </form>
+    </div>
+  </div>
+
   <main>
     <header>
       <h1>File Organizer</h1>
       <p class="subtitle">Preview what would move — nothing happens until you click Organize.</p>
       <span id="ws-status" class="ws-status connecting">connecting…</span>
+      <button id="logout-btn" class="logout-btn hidden" title="Sign out">Sign out</button>
     </header>
 
     <section class="mode-row">
@@ -215,6 +229,18 @@
               <input id="new-skip-prefix" type="text" class="ext-input" placeholder="+ prefix" spellcheck="false" />
               <button id="add-skip-prefix" class="secondary tiny">Add</button>
             </div>
+          </div>
+        </div>
+
+        <div class="settings-row">
+          <label class="settings-label">Password</label>
+          <div class="settings-tags">
+            <div class="skip-add">
+              <input id="new-password" type="password" class="ext-input-wide" placeholder="New password (min 6 chars)" autocomplete="new-password" spellcheck="false" />
+              <button id="set-password-btn" class="primary tiny">Set password</button>
+              <button id="clear-password-btn" class="danger tiny">Clear</button>
+            </div>
+            <p id="password-status" class="password-status hidden"></p>
           </div>
         </div>
 

@@ -1,51 +1,51 @@
-## Docker (no Python setup)
+## Standalone executable
 
-Runs in a container. One command, no dependency install, no venv.
+Build a single-file binary that runs without Python installed.
 
-### 1. Build
+### Build (once)
 
 ```bash
-docker compose build
+python -m pip install pyinstaller
 ```
 
-### 2. Choose a folder to organize
-
-Set `ORGANIZE_DIR` to the folder on your machine you want the app to see:
-
-**Windows (PowerShell):**
+**Windows:**
 ```powershell
-$env:ORGANIZE_DIR = "C:\Users\anshb\Downloads"
-docker compose up
+.\build.ps1
 ```
 
 **macOS / Linux:**
 ```bash
-ORGANIZE_DIR=/Users/anshb/Downloads docker compose up
+./build.sh
 ```
 
-### 3. Open
+### Run
 
-```
-http://127.0.0.1:8000
-```
+**Windows:** double-click `dist\FileOrganizer.exe`
 
-**Inside the container, your folder appears as `/data`.** Paste `/data` in the folder input.
-
-### What persists
-
-| Item | Location | Survives container removal? |
-|---|---|---|
-| `rules.yaml`, `settings.yaml`, `schedules.yaml` | Docker volume `file-organizer-data` | ✅ Yes |
-| Undo history (`logs/*.json`) | Docker volume `file-organizer-data` | ✅ Yes |
-| Files in `ORGANIZE_DIR` | Your host folder (bind mount) | ✅ Yes |
-
-Reset all config:
+**macOS / Linux:**
 ```bash
-docker compose down -v
-docker compose up
+./dist/FileOrganizer
 ```
 
-### Limitations
+The app starts, opens `http://127.0.0.1:8000` in your browser, and stays running until you close the console window.
 
-- **OS trash is disabled inside Docker.** Files can't be sent to your host's Recycle Bin / Trash from a container — use **Quarantine duplicates** instead.
-- **File watching** (the "Watch folder" panel) works on Linux hosts. On macOS and Windows it depends on Docker Desktop's file-sharing implementation; if files aren't detected automatically, use **Schedules** or click **Scan** manually.
+### Where config lives
+
+A `data/` folder is created next to the executable on first run. It holds:
+
+```
+FileOrganizer.exe
+data/
+├── rules.yaml
+├── settings.yaml
+├── schedules.yaml
+├── folder_rules.yaml
+└── logs/
+```
+
+Move the whole folder (exe + data/) to back up or relocate.
+
+### Build size
+
+~50–80 MB depending on platform. Most of it is the Python runtime and
+bundled dependencies (Pillow, watchdog, uvicorn).

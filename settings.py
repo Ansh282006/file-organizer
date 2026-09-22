@@ -27,9 +27,16 @@ class Settings:
     date_format: str = "%Y-%m"
     skip_names: list[str] = field(default_factory=lambda: list(DEFAULT_SKIP_NAMES))
     skip_prefixes: list[str] = field(default_factory=lambda: list(DEFAULT_SKIP_PREFIXES))
+    auth_enabled: bool = False
+    password_hash: str = ""
 
-    def to_dict(self) -> dict:
-        return asdict(self)
+    def to_dict(self, hide_secrets: bool = False) -> dict:
+        data = asdict(self)
+        if hide_secrets:
+            # Never leak the password hash to the frontend
+            data["password_hash"] = ""
+            data["has_password"] = bool(self.password_hash)
+        return data
 
 
 def load_settings(path: Path | None = None) -> Settings:
@@ -46,6 +53,8 @@ def load_settings(path: Path | None = None) -> Settings:
         date_format=raw.get("date_format", "%Y-%m"),
         skip_names=list(raw.get("skip_names", DEFAULT_SKIP_NAMES)),
         skip_prefixes=list(raw.get("skip_prefixes", DEFAULT_SKIP_PREFIXES)),
+        auth_enabled=bool(raw.get("auth_enabled", False)),
+        password_hash=str(raw.get("password_hash", "") or ""),
     )
 
 
@@ -58,6 +67,8 @@ def save_settings(settings: Settings, path: Path | None = None) -> None:
 
 
 def update_settings(partial: dict, path: Path | None = None) -> Settings:
+    from auth import hash_password
+
     current = load_settings(path)
     data = current.to_dict()
 
@@ -84,6 +95,25 @@ def update_settings(partial: dict, path: Path | None = None) -> Settings:
         if not isinstance(prefixes, list):
             raise ValueError("skip_prefixes must be a list")
         data["skip_prefixes"] = [str(p) for p in prefixes if str(p)]
+
+    # Auth fields — handled carefully
+    if "auth_enabled" in partial:
+        data["auth_enabled"] = bool(partial["auth_enabled"])
+
+    if "password" in partial:
+        pw = partial.get("password")
+        if pw is None or pw == "":
+            # Empty string = remove password
+            data["password_hash"] = ""
+            data["auth_enabled"] = False
+        else:
+            pw = str(pw)
+            if len(pw) < 6:
+                raise ValueError("Password must be at least 6 characters")
+            data["password_hash"] = hash_password(pw)
+            # Setting a password auto-enables auth unless explicitly disabled
+            if "auth_enabled" not in partial:
+                data["auth_enabled"] = True
 
     updated = Settings(**data)
     save_settings(updated, path)

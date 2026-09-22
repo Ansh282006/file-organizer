@@ -1,5 +1,110 @@
 const $ = (sel) => document.querySelector(sel);
 
+// ---------- Auth ----------
+
+const AUTH = {
+  required: false,
+  authenticated: true,
+};
+
+async function checkAuth() {
+  try {
+    const r = await fetch("/api/auth/status");
+    const data = await r.json();
+    AUTH.required = data.required;
+    AUTH.authenticated = data.authenticated;
+    return data;
+  } catch {
+    AUTH.required = false;
+    AUTH.authenticated = true;
+    return { required: false, authenticated: true };
+  }
+}
+
+function showLoginOverlay() {
+  const overlay = document.getElementById("login-overlay");
+  if (overlay) overlay.classList.remove("hidden");
+  const input = document.getElementById("login-password");
+  if (input) {
+    input.value = "";
+    setTimeout(() => input.focus(), 50);
+  }
+}
+
+function hideLoginOverlay() {
+  const overlay = document.getElementById("login-overlay");
+  if (overlay) overlay.classList.add("hidden");
+  const err = document.getElementById("login-error");
+  if (err) err.classList.add("hidden");
+}
+
+async function submitLogin(e) {
+  if (e) e.preventDefault();
+  const input = document.getElementById("login-password");
+  const errEl = document.getElementById("login-error");
+  const btn = document.getElementById("login-btn");
+  const pw = input ? input.value : "";
+  if (!pw) return;
+
+  if (btn) { btn.disabled = true; btn.textContent = "Signing in..."; }
+  if (errEl) errEl.classList.add("hidden");
+
+  try {
+    const r = await fetch("/api/auth/login", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ password: pw }),
+    });
+    if (!r.ok) {
+      const data = await r.json().catch(() => ({}));
+      if (errEl) {
+        errEl.textContent = data.detail || "Incorrect password";
+        errEl.classList.remove("hidden");
+      }
+      return;
+    }
+
+    AUTH.authenticated = true;
+    hideLoginOverlay();
+    await boot();
+  } catch (err) {
+    if (errEl) {
+      errEl.textContent = `Network error: ${err.message}`;
+      errEl.classList.remove("hidden");
+    }
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = "Sign in"; }
+  }
+}
+
+async function logout() {
+  try {
+    await fetch("/api/auth/logout", { method: "POST" });
+  } catch {}
+  AUTH.authenticated = false;
+  if (ws) { try { ws.close(); } catch {} ws = null; }
+  showLoginOverlay();
+}
+
+function wireLoginUI() {
+  const form = document.getElementById("login-form");
+  if (form) form.addEventListener("submit", submitLogin);
+  const logoutBtn = document.getElementById("logout-btn");
+  if (logoutBtn) logoutBtn.addEventListener("click", logout);
+}
+
+function updateLogoutVisibility() {
+  const btn = document.getElementById("logout-btn");
+  if (!btn) return;
+  if (AUTH.required && AUTH.authenticated) {
+    btn.classList.remove("hidden");
+  } else {
+    btn.classList.add("hidden");
+  }
+}
+
+// ---------- Element refs ----------
+
 const els = {
   folder:        $("#folder-input"),
   scanBtn:       $("#scan-btn"),
@@ -72,6 +177,10 @@ const els = {
   newSkipPrefix:    $("#new-skip-prefix"),
   addSkipPrefix:    $("#add-skip-prefix"),
   settingsSaved:    $("#settings-saved"),
+  newPassword:      $("#new-password"),
+  setPasswordBtn:   $("#set-password-btn"),
+  clearPasswordBtn: $("#clear-password-btn"),
+  passwordStatus:   $("#password-status"),
   // backup
   exportConfigBtn:  $("#export-config-btn"),
   importFileInput:  $("#import-file-input"),
@@ -154,8 +263,21 @@ function connectWs() {
     stopWatchPolling();
   };
 
-  ws.onclose = () => {
+  ws.onclose = (e) => {
     wsConnected = false;
+    // If the server closed with 1008 (policy violation) → likely auth required
+    if (e && e.code === 1008) {
+      setWsState("disconnected");
+      // Re-check auth; if it's now required and we're not authed, show login
+      checkAuth().then(s => {
+        if (s.required && !s.authenticated) {
+          AUTH.required = true;
+          AUTH.authenticated = false;
+          showLoginOverlay();
+        }
+      });
+      return;
+    }
     setWsState("disconnected");
     refreshWatch();
     startWatchPolling();
@@ -847,7 +969,6 @@ els.largeBody.addEventListener("change", (e) => {
   else largeFilesSelected.delete(idx);
   updateLargeFilesButtons();
 
-  // Update select-all state
   if (largeFilesResult) {
     els.largeSelectAll.checked = largeFilesSelected.size === largeFilesResult.files.length;
     els.largeSelectAll.indeterminate =
@@ -1017,6 +1138,17 @@ function renderSettings() {
 
   renderChips(els.skipNamesChips, currentSettings.skip_names || [], "skip_names");
   renderChips(els.skipPrefixesChips, currentSettings.skip_prefixes || [], "skip_prefixes");
+
+  // Password status
+  if (currentSettings.has_password) {
+    els.passwordStatus.textContent = "Password is set.";
+    els.passwordStatus.className = "password-status ok";
+    els.passwordStatus.classList.remove("hidden");
+  } else {
+    els.passwordStatus.textContent = "No password — the app is open to anyone who can reach it.";
+    els.passwordStatus.className = "password-status";
+    els.passwordStatus.classList.remove("hidden");
+  }
 }
 
 function renderChips(container, values, field) {
@@ -1040,6 +1172,9 @@ async function saveSettings(partial) {
     currentSettings = data.settings;
     renderSettings();
     flashSaved();
+    // Auth might have just been enabled/disabled — refresh status
+    await checkAuth();
+    updateLogoutVisibility();
   } catch (err) {
     showStatus(`Settings: ${err.message}`, "error");
   }
@@ -1093,6 +1228,38 @@ els.addSkipPrefix.addEventListener("click", async () => {
 
 els.newSkipPrefix.addEventListener("keydown", (e) => {
   if (e.key === "Enter") els.addSkipPrefix.click();
+});
+
+// Password controls
+els.setPasswordBtn.addEventListener("click", async () => {
+  const pw = els.newPassword.value;
+  if (!pw) { showStatus("Enter a password first.", "error"); return; }
+  if (pw.length < 6) { showStatus("Password must be at least 6 characters.", "error"); return; }
+  els.setPasswordBtn.disabled = true;
+  try {
+    await saveSettings({ password: pw });
+    els.newPassword.value = "";
+    showStatus("Password set. Logins are now required.", "success");
+  } finally {
+    els.setPasswordBtn.disabled = false;
+  }
+});
+
+els.newPassword.addEventListener("keydown", (e) => {
+  if (e.key === "Enter") els.setPasswordBtn.click();
+});
+
+els.clearPasswordBtn.addEventListener("click", async () => {
+  if (!currentSettings || !currentSettings.has_password) return;
+  if (!confirm("Remove the password? Anyone who can reach this app will have full access.")) return;
+  els.clearPasswordBtn.disabled = true;
+  try {
+    await saveSettings({ password: "" });
+    els.newPassword.value = "";
+    showStatus("Password removed. The app is open again.", "success");
+  } finally {
+    els.clearPasswordBtn.disabled = false;
+  }
 });
 
 els.toggleSettings.addEventListener("click", () => {
@@ -1159,6 +1326,8 @@ async function importConfigFile(file) {
     await loadRules();
     await loadFolderRules();
     await loadSchedules();
+    await checkAuth();
+    updateLogoutVisibility();
   } catch (err) {
     showStatus(`Import failed: ${err.message}`, "error");
   }
@@ -1181,6 +1350,8 @@ async function resetConfig() {
     await loadRules();
     await loadFolderRules();
     await loadSchedules();
+    await checkAuth();
+    updateLogoutVisibility();
   } catch (err) {
     showStatus(`Reset failed: ${err.message}`, "error");
   }
@@ -1526,7 +1697,7 @@ els.folder.addEventListener("keydown", (e) => { if (e.key === "Enter") scan(); }
 
 // ---------- init ----------
 
-async function init() {
+async function boot() {
   const s = await fetch("/api/settings").then(r => r.json()).catch(() => null);
   const initialMode = s?.settings?.default_mode || "extension";
   setMode(initialMode);
@@ -1540,6 +1711,8 @@ async function init() {
     trashSupported = false;
   }
 
+  updateLogoutVisibility();
+
   loadLogs();
   loadSchedules();
   refreshWatch();
@@ -1547,10 +1720,18 @@ async function init() {
   connectWs();
 }
 
+async function init() {
+  wireLoginUI();
+  const status = await checkAuth();
+  if (status.required && !status.authenticated) {
+    showLoginOverlay();
+    return;
+  }
+  await boot();
+}
+
 init();
 
 window.addEventListener("beforeunload", () => {
-  if (ws) {
-    try { ws.close(); } catch {}
-  }
+  if (ws) { try { ws.close(); } catch {} }
 });

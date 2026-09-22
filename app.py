@@ -6,10 +6,11 @@ import asyncio
 import json
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException, Query, WebSocket
-from fastapi.responses import Response
+from fastapi import FastAPI, HTTPException, Query, Request, WebSocket
+from fastapi.responses import JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 
+import auth
 import events
 import folder_rules as fr
 from config_io import export_bundle, import_bundle, reset_all
@@ -44,7 +45,7 @@ from thumbnails import generate_thumbnail, is_image
 from trash import is_supported as trash_supported, trash_many
 from watcher import WatchManager
 
-app = FastAPI(title="File Organizer", version="1.1.0")
+app = FastAPI(title="File Organizer", version="1.2.0")
 
 STATIC_DIR = Path(__file__).parent / "static"
 watch_manager = WatchManager()
@@ -67,6 +68,68 @@ async def _shutdown():
         _broadcast_task.cancel()
 
 
+# ---------- Auth middleware ----------
+
+@app.middleware("http")
+async def _auth_middleware(request: Request, call_next):
+    path = request.url.path
+
+    if auth.is_public_path(path):
+        return await call_next(request)
+
+    if not auth.is_auth_required():
+        return await call_next(request)
+
+    if not auth.is_authenticated(dict(request.cookies)):
+        return JSONResponse(
+            {"detail": "Authentication required"},
+            status_code=401,
+        )
+
+    return await call_next(request)
+
+
+# ---------- Auth endpoints ----------
+
+@app.get("/api/auth/status")
+def api_auth_status(request: Request):
+    required = auth.is_auth_required()
+    authed = auth.is_authenticated(dict(request.cookies))
+    return {
+        "required": required,
+        "authenticated": authed or not required,
+    }
+
+
+@app.post("/api/auth/login")
+def api_auth_login(payload: dict, response: Response):
+    s = load_settings()
+    if not s.auth_enabled or not s.password_hash:
+        return {"ok": True, "message": "Auth not enabled"}
+
+    password = payload.get("password", "")
+    if not auth.verify_password(password, s.password_hash):
+        raise HTTPException(status_code=401, detail="Incorrect password")
+
+    token = auth.create_session()
+    response.set_cookie(
+        key=auth.COOKIE_NAME,
+        value=token,
+        max_age=auth.SESSION_MAX_AGE,
+        httponly=True,
+        samesite="lax",
+    )
+    return {"ok": True}
+
+
+@app.post("/api/auth/logout")
+def api_auth_logout(response: Response):
+    response.delete_cookie(auth.COOKIE_NAME)
+    return {"ok": True}
+
+
+# ---------- helpers ----------
+
 def _resolved_rules(path: str | Path) -> list:
     return fr.resolve_rules_for(path, load_rules())
 
@@ -88,6 +151,12 @@ def _scan_with_settings(path: str, mode: str | None = None) -> Plan:
 
 @app.websocket("/ws")
 async def ws_endpoint(websocket: WebSocket):
+    # WebSockets bypass HTTP middleware; check auth explicitly
+    if auth.is_auth_required():
+        cookies = websocket.cookies or {}
+        if not auth.is_authenticated(cookies):
+            await websocket.close(code=1008)  # policy violation
+            return
     await events.handle_connection(websocket)
 
 
@@ -344,10 +413,7 @@ def api_duplicates_trash(payload: dict):
 # ---------- large files ----------
 
 @app.get("/api/large-files")
-def api_large_files(
-    path: str = Query(...),
-    min_mb: float = Query(100.0),
-):
+def api_large_files(path: str = Query(...), min_mb: float = Query(100.0)):
     if min_mb < 0:
         raise HTTPException(status_code=400, detail="min_mb must be >= 0")
     s = load_settings()
@@ -525,7 +591,7 @@ def api_run_schedule(schedule_id: str):
 @app.get("/api/settings")
 def api_get_settings():
     s = load_settings()
-    return {"settings": s.to_dict(), "date_format_options": DATE_FORMAT_OPTIONS}
+    return {"settings": s.to_dict(hide_secrets=True), "date_format_options": DATE_FORMAT_OPTIONS}
 
 
 @app.post("/api/settings")
@@ -536,8 +602,8 @@ def api_update_settings(payload: dict):
         updated = update_settings(payload)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
-    events.publish("settings_updated", {"settings": updated.to_dict()})
-    return {"ok": True, "settings": updated.to_dict()}
+    events.publish("settings_updated", {})
+    return {"ok": True, "settings": updated.to_dict(hide_secrets=True)}
 
 
 # ---------- watch ----------

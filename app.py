@@ -11,6 +11,7 @@ from fastapi.responses import Response
 from fastapi.staticfiles import StaticFiles
 
 import events
+import folder_rules as fr
 from config_io import export_bundle, import_bundle, reset_all
 from duplicates import find_duplicates, plan_quarantine
 from organizer import (
@@ -41,7 +42,7 @@ from thumbnails import generate_thumbnail, is_image
 from trash import is_supported as trash_supported, trash_many
 from watcher import WatchManager
 
-app = FastAPI(title="File Organizer", version="0.9.0")
+app = FastAPI(title="File Organizer", version="1.0.0")
 
 STATIC_DIR = Path(__file__).parent / "static"
 watch_manager = WatchManager()
@@ -64,11 +65,17 @@ async def _shutdown():
         _broadcast_task.cancel()
 
 
+def _resolved_rules(path: str | Path) -> list:
+    """Global rules merged with folder-specific rules (if any)."""
+    return fr.resolve_rules_for(path, load_rules())
+
+
 def _scan_with_settings(path: str, mode: str | None = None) -> Plan:
     s = load_settings()
     effective_mode = mode or s.default_mode
     return scan(
         Path(path),
+        rules=_resolved_rules(path),
         mode=effective_mode,
         date_format=s.date_format,
         skip_names=set(s.skip_names),
@@ -333,6 +340,58 @@ def api_duplicates_trash(payload: dict):
     return trash_result
 
 
+# ---------- folder rules ----------
+
+@app.get("/api/folder-rules")
+def api_list_folder_rules():
+    return {"folders": fr.list_folder_rules()}
+
+
+@app.post("/api/folder-rules")
+def api_set_folder_rule(payload: dict):
+    if not isinstance(payload, dict):
+        raise HTTPException(status_code=400, detail="Body must be a JSON object")
+    path = payload.get("path")
+    if not path:
+        raise HTTPException(status_code=400, detail="Missing 'path'")
+    rules = payload.get("rules")
+    if rules is None:
+        rules = {}
+    if not isinstance(rules, dict):
+        raise HTTPException(status_code=400, detail="'rules' must be an object")
+
+    for name, exts in rules.items():
+        if not isinstance(exts, list):
+            raise HTTPException(status_code=400, detail=f"Extensions for '{name}' must be a list")
+
+    try:
+        entry = fr.set_folder_rule(path, rules)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"{type(e).__name__}: {e}")
+
+    events.publish("folder_rules_updated", {"path": entry["path"]})
+    return {"ok": True, "entry": entry}
+
+
+@app.delete("/api/folder-rules")
+def api_delete_folder_rule(path: str = Query(...)):
+    try:
+        fr.remove_folder_rule(path)
+    except KeyError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    events.publish("folder_rules_updated", {"path": path})
+    return {"ok": True}
+
+
+@app.get("/api/folder-rules/resolve")
+def api_resolve_folder_rules(path: str = Query(...)):
+    resolved = _resolved_rules(path)
+    return {
+        "folder": path,
+        "effective_rules": {r.name: sorted(r.extensions) for r in resolved},
+    }
+
+
 # ---------- schedules ----------
 
 @app.get("/api/schedules")
@@ -436,7 +495,7 @@ def api_watch_stop():
     return watch_manager.stop()
 
 
-# ---------- rules ----------
+# ---------- rules (global) ----------
 
 @app.get("/api/rules")
 def api_rules():

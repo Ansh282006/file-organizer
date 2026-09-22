@@ -192,8 +192,8 @@
         <h2>Backup &amp; Restore</h2>
       </div>
       <p class="backup-hint">
-        Export rules, settings, and schedules as a single JSON file. Nothing about
-        your actual files is included — only configuration.
+        Export rules, settings, schedules, and folder rules as a single JSON file.
+        Nothing about your actual files is included — only configuration.
       </p>
 
       <div class="backup-controls">
@@ -226,7 +226,7 @@
       <div id="rules-body" class="rules-body hidden">
         <p class="rules-hint">
           Edit categories and extensions. Changes save instantly to <code>rules.yaml</code>.
-          These rules only apply in <strong>Extension</strong> mode.
+          These rules apply globally in <strong>Extension</strong> mode. Folders can override them below.
         </p>
 
         <div id="rules-list"></div>
@@ -235,6 +235,28 @@
           <input id="new-category-input" type="text" placeholder="New category name" spellcheck="false" />
           <button id="add-category-btn" class="primary">Add category</button>
         </div>
+      </div>
+    </section>
+
+    <section class="folder-rules-panel">
+      <div class="folder-rules-header">
+        <h2>Folder rules</h2>
+        <button id="toggle-folder-rules" class="secondary">Show</button>
+      </div>
+
+      <div id="folder-rules-body" class="folder-rules-body hidden">
+        <p class="folder-rules-hint">
+          Override categories for a specific folder. Merged on top of the global Rules —
+          categories you name here replace the global ones; anything you don't name falls through.
+        </p>
+
+        <div class="folder-rules-add">
+          <input id="new-folder-rule-path" type="text" class="ext-input-wide" placeholder="Absolute folder path (e.g. C:\Users\anshb\Downloads)" spellcheck="false" />
+          <button id="add-folder-rule-btn" class="primary">Add folder</button>
+        </div>
+
+        <div id="folder-rules-empty" class="folder-rules-empty">No folder-specific rules yet.</div>
+        <div id="folder-rules-list" class="folder-rules-list"></div>
       </div>
     </section>
   </main>

@@ -66,18 +66,26 @@ const els = {
   exportConfigBtn:  $("#export-config-btn"),
   importFileInput:  $("#import-file-input"),
   resetConfigBtn:   $("#reset-config-btn"),
+  // folder rules
+  toggleFolderRules: $("#toggle-folder-rules"),
+  folderRulesBody:   $("#folder-rules-body"),
+  newFolderRulePath: $("#new-folder-rule-path"),
+  addFolderRuleBtn:  $("#add-folder-rule-btn"),
+  folderRulesEmpty:  $("#folder-rules-empty"),
+  folderRulesList:   $("#folder-rules-list"),
 };
 
 let latestUndoableLog = null;
 let rulesVisible = false;
 let settingsVisible = false;
+let folderRulesVisible = false;
 let currentMode = "extension";
 let currentSettings = null;
 let dateFormatOptions = [];
 let lastDupeResult = null;
 let trashSupported = false;
+let folderRules = [];
 
-// WebSocket + polling state
 let ws = null;
 let wsReconnectTimer = null;
 let wsConnected = false;
@@ -131,24 +139,19 @@ function connectWs() {
     wsConnected = true;
     setWsState("connected");
     if (wsReconnectTimer) { clearTimeout(wsReconnectTimer); wsReconnectTimer = null; }
-    // Stop polling while live
     stopWatchPolling();
   };
 
   ws.onclose = () => {
     wsConnected = false;
     setWsState("disconnected");
-    // Fall back to polling
     refreshWatch();
     startWatchPolling();
-    // Reconnect after 2s
     if (wsReconnectTimer) clearTimeout(wsReconnectTimer);
     wsReconnectTimer = setTimeout(connectWs, 2000);
   };
 
-  ws.onerror = () => {
-    // Let onclose handle the recovery
-  };
+  ws.onerror = () => {};
 
   ws.onmessage = (ev) => {
     let msg;
@@ -161,82 +164,50 @@ function handleWsEvent(msg) {
   const { type, data } = msg;
 
   switch (type) {
-    case "hello":
-      break;
-
-    case "watch_run":
-      appendWatchRun(data);
-      flashWatchPanel();
-      // A watch run created a new log
-      loadLogs();
-      break;
-
-    case "watch_error":
-      showStatus(`Watch error on ${data.file}: ${data.error}`, "error");
-      break;
-
-    case "watch_started":
-      refreshWatch();
-      showStatus(`Watching ${data.folder}`, "success");
-      break;
-
-    case "watch_stopped":
-      refreshWatch();
-      break;
-
-    case "organize":
-      loadLogs();
-      break;
-
-    case "undo":
-      loadLogs();
-      break;
-
-    case "quarantine":
-      loadLogs();
-      break;
-
+    case "hello": break;
+    case "watch_run": appendWatchRun(data); flashWatchPanel(); loadLogs(); break;
+    case "watch_error": showStatus(`Watch error on ${data.file}: ${data.error}`, "error"); break;
+    case "watch_started": refreshWatch(); showStatus(`Watching ${data.folder}`, "success"); break;
+    case "watch_stopped": refreshWatch(); break;
+    case "organize": loadLogs(); break;
+    case "undo": loadLogs(); break;
+    case "quarantine": loadLogs(); break;
     case "trash":
       if (data.trashed) showStatus(`Trashed ${data.trashed} file(s)`, "success");
       break;
-
     case "schedule_run":
-      loadSchedules();
-      loadLogs();
+      loadSchedules(); loadLogs();
       showStatus(`Scheduled run — ${data.moved} file(s) from ${data.folder}`, "success");
       break;
-
     case "schedule_error":
       loadSchedules();
       showStatus(`Scheduled run failed: ${data.error}`, "error");
       break;
-
     case "schedule_added":
     case "schedule_updated":
     case "schedule_removed":
       loadSchedules();
       break;
-
     case "settings_updated":
-      // Reflect settings changes if the panel is open
       if (settingsVisible) loadSettings();
       break;
-
     case "rules_updated":
       if (rulesVisible) loadRules();
       break;
-
+    case "folder_rules_updated":
+      if (folderRulesVisible) loadFolderRules();
+      break;
     case "config_imported":
     case "config_reset":
       loadSettings();
       if (rulesVisible) loadRules();
+      if (folderRulesVisible) loadFolderRules();
       loadSchedules();
       break;
   }
 }
 
 function appendWatchRun(run) {
-  // Insert at top of the list without full reload
   if (els.watchRuns.classList.contains("hidden")) {
     els.watchRuns.classList.remove("hidden");
     els.watchRunsList.innerHTML = "";
@@ -248,7 +219,6 @@ function appendWatchRun(run) {
 }
 
 function flashWatchPanel() {
-  // Subtle pulse to draw attention
   const panel = els.watchRuns.closest(".watch-panel");
   if (!panel) return;
   panel.classList.add("row-flash");
@@ -539,7 +509,6 @@ async function watchStop() {
   }
 }
 
-// Polling fallback — only active when WebSocket is not connected
 function startWatchPolling() {
   if (wsConnected) return;
   stopWatchPolling();
@@ -816,7 +785,6 @@ els.schedList.addEventListener("click", async (e) => {
 
 els.addScheduleBtn.addEventListener("click", addSchedule);
 
-// Fallback-only: refresh schedules every 30s if WS is down
 setInterval(() => {
   if (!document.hidden && !wsConnected) loadSchedules();
 }, 30000);
@@ -970,7 +938,7 @@ async function importConfigFile(file) {
   const confirmed = confirm(
     `Import "${file.name}" with strategy: ${strategy.toUpperCase()}?\n\n` +
     (strategy === "replace"
-      ? "This will OVERWRITE your current rules, settings, and schedules."
+      ? "This will OVERWRITE your current rules, settings, schedules, and folder rules."
       : "Categories and schedules will be merged (existing preserved).")
   );
   if (!confirmed) return;
@@ -986,12 +954,13 @@ async function importConfigFile(file) {
 
     const a = data.applied;
     showStatus(
-      `Imported — ${a.rules} categories, settings ${a.settings ? "updated" : "skipped"}, ${a.schedules} schedule(s)`,
+      `Imported — ${a.rules} categories, ${a.folder_rules || 0} folder rule(s), settings ${a.settings ? "updated" : "skipped"}, ${a.schedules} schedule(s)`,
       "success"
     );
 
     await loadSettings();
     await loadRules();
+    await loadFolderRules();
     await loadSchedules();
   } catch (err) {
     showStatus(`Import failed: ${err.message}`, "error");
@@ -1000,7 +969,7 @@ async function importConfigFile(file) {
 
 async function resetConfig() {
   const confirmed = confirm(
-    "Reset rules, settings, and schedules to defaults?\n\n" +
+    "Reset rules, settings, schedules, and folder rules to defaults?\n\n" +
     "This does NOT touch your files or history logs."
   );
   if (!confirmed) return;
@@ -1013,6 +982,7 @@ async function resetConfig() {
     showStatus("Config reset to defaults.", "success");
     await loadSettings();
     await loadRules();
+    await loadFolderRules();
     await loadSchedules();
   } catch (err) {
     showStatus(`Reset failed: ${err.message}`, "error");
@@ -1029,7 +999,7 @@ els.importFileInput.addEventListener("change", async (e) => {
 
 els.resetConfigBtn.addEventListener("click", resetConfig);
 
-// ---------- rules editor ----------
+// ---------- rules editor (global) ----------
 
 async function loadRules() {
   try {
@@ -1138,6 +1108,211 @@ els.toggleRules.addEventListener("click", () => {
   if (rulesVisible) loadRules();
 });
 
+// ---------- folder rules editor ----------
+
+async function loadFolderRules() {
+  try {
+    const res = await fetch("/api/folder-rules");
+    const data = await res.json();
+    folderRules = data.folders || [];
+    renderFolderRules();
+  } catch (err) {
+    els.folderRulesList.innerHTML = `<p class="folder-rules-hint">Failed to load: ${escapeHtml(err.message)}</p>`;
+  }
+}
+
+function renderFolderRules() {
+  if (folderRules.length === 0) {
+    els.folderRulesEmpty.classList.remove("hidden");
+    els.folderRulesList.innerHTML = "";
+    return;
+  }
+  els.folderRulesEmpty.classList.add("hidden");
+
+  els.folderRulesList.innerHTML = folderRules.map(entry => {
+    const path = entry.path;
+    const rules = entry.rules || {};
+    const catCount = Object.keys(rules).length;
+
+    const ruleRows = Object.entries(rules).map(([cat, exts]) => `
+      <div class="rules-row" data-category="${escapeHtml(cat)}">
+        <div class="rules-cat">${escapeHtml(cat)}</div>
+        <div class="rules-exts">
+          ${exts.map(e => `
+            <span class="ext-chip">
+              ${escapeHtml(e)}
+              <button class="fr-chip-x" data-cat="${escapeHtml(cat)}" data-ext="${escapeHtml(e)}" title="Remove">×</button>
+            </span>
+          `).join("")}
+          <input type="text" class="ext-input fr-ext-input" placeholder="+ ext" spellcheck="false" />
+          <button class="fr-ext-add secondary tiny">Add</button>
+          <button class="fr-cat-del danger tiny">Delete category</button>
+        </div>
+      </div>
+    `).join("") || `<p class="rules-hint">No categories yet. Add one below.</p>`;
+
+    return `
+      <div class="folder-rule-item" data-path="${escapeHtml(path)}">
+        <div class="folder-rule-header">
+          <span class="folder-rule-path" title="${escapeHtml(path)}">
+            <span class="badge">${catCount}</span>${escapeHtml(path)}
+          </span>
+          <div class="folder-rule-actions">
+            <button class="secondary tiny fr-toggle">Edit</button>
+            <button class="danger tiny fr-delete">Delete</button>
+          </div>
+        </div>
+        <div class="folder-rule-body hidden">
+          ${ruleRows}
+          <div class="rules-add-category">
+            <input type="text" class="ext-input fr-new-cat" placeholder="New category name" spellcheck="false" />
+            <button class="primary fr-add-cat">Add category</button>
+          </div>
+        </div>
+      </div>
+    `;
+  }).join("");
+}
+
+async function saveFolderRule(path, rules) {
+  const res = await fetch("/api/folder-rules", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ path, rules }),
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.detail || `Error ${res.status}`);
+  return data.entry;
+}
+
+async function addFolderRule() {
+  const path = els.newFolderRulePath.value.trim();
+  if (!path) { showStatus("Enter a folder path.", "error"); return; }
+  els.addFolderRuleBtn.disabled = true;
+  try {
+    await saveFolderRule(path, {});
+    els.newFolderRulePath.value = "";
+    showStatus(`Folder rule added for ${path}`, "success");
+    await loadFolderRules();
+  } catch (err) {
+    showStatus(`Folder rules: ${err.message}`, "error");
+  } finally {
+    els.addFolderRuleBtn.disabled = false;
+  }
+}
+
+els.addFolderRuleBtn.addEventListener("click", addFolderRule);
+
+els.newFolderRulePath.addEventListener("keydown", (e) => {
+  if (e.key === "Enter") els.addFolderRuleBtn.click();
+});
+
+els.toggleFolderRules.addEventListener("click", () => {
+  folderRulesVisible = !folderRulesVisible;
+  els.folderRulesBody.classList.toggle("hidden", !folderRulesVisible);
+  els.toggleFolderRules.textContent = folderRulesVisible ? "Hide" : "Show";
+  if (folderRulesVisible) loadFolderRules();
+});
+
+els.folderRulesList.addEventListener("click", async (e) => {
+  const item = e.target.closest(".folder-rule-item");
+  if (!item) return;
+  const path = item.dataset.path;
+
+  if (e.target.classList.contains("fr-toggle")) {
+    const body = item.querySelector(".folder-rule-body");
+    body.classList.toggle("hidden");
+    e.target.textContent = body.classList.contains("hidden") ? "Edit" : "Done";
+    return;
+  }
+
+  if (e.target.classList.contains("fr-delete")) {
+    if (!confirm(`Delete folder rule for:\n${path}?`)) return;
+    try {
+      const res = await fetch(`/api/folder-rules?path=${encodeURIComponent(path)}`, { method: "DELETE" });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.detail || `Error ${res.status}`);
+      showStatus(`Folder rule removed for ${path}`, "success");
+      await loadFolderRules();
+    } catch (err) {
+      showStatus(`Folder rules: ${err.message}`, "error");
+    }
+    return;
+  }
+
+  const entry = folderRules.find(f => f.path === path);
+  if (!entry) return;
+  const currentRules = { ...(entry.rules || {}) };
+
+  if (e.target.classList.contains("fr-chip-x")) {
+    const cat = e.target.dataset.cat;
+    const ext = e.target.dataset.ext;
+    if (!currentRules[cat]) return;
+    currentRules[cat] = currentRules[cat].filter(x => x !== ext);
+    try {
+      await saveFolderRule(path, currentRules);
+      await loadFolderRules();
+    } catch (err) { showStatus(`Folder rules: ${err.message}`, "error"); }
+    return;
+  }
+
+  if (e.target.classList.contains("fr-ext-add")) {
+    const row = e.target.closest(".rules-row");
+    const cat = row.dataset.category;
+    const input = row.querySelector(".fr-ext-input");
+    const value = input.value.trim();
+    if (!value) return;
+    const normalised = value.startsWith(".") ? value.toLowerCase() : "." + value.toLowerCase();
+    const exts = new Set(currentRules[cat] || []);
+    exts.add(normalised);
+    currentRules[cat] = Array.from(exts).sort();
+    try {
+      await saveFolderRule(path, currentRules);
+      await loadFolderRules();
+    } catch (err) { showStatus(`Folder rules: ${err.message}`, "error"); }
+    return;
+  }
+
+  if (e.target.classList.contains("fr-cat-del")) {
+    const row = e.target.closest(".rules-row");
+    const cat = row.dataset.category;
+    if (!confirm(`Delete category "${cat}" for this folder?`)) return;
+    delete currentRules[cat];
+    try {
+      await saveFolderRule(path, currentRules);
+      await loadFolderRules();
+    } catch (err) { showStatus(`Folder rules: ${err.message}`, "error"); }
+    return;
+  }
+
+  if (e.target.classList.contains("fr-add-cat")) {
+    const input = item.querySelector(".fr-new-cat");
+    const name = input.value.trim();
+    if (!name) return;
+    if (currentRules[name]) {
+      showStatus(`Category "${name}" already exists`, "error");
+      return;
+    }
+    currentRules[name] = [];
+    try {
+      await saveFolderRule(path, currentRules);
+      await loadFolderRules();
+    } catch (err) { showStatus(`Folder rules: ${err.message}`, "error"); }
+    return;
+  }
+});
+
+els.folderRulesList.addEventListener("keydown", (e) => {
+  if (e.key !== "Enter") return;
+  if (e.target.classList.contains("fr-ext-input")) {
+    e.preventDefault();
+    e.target.closest(".rules-row").querySelector(".fr-ext-add").click();
+  } else if (e.target.classList.contains("fr-new-cat")) {
+    e.preventDefault();
+    e.target.closest(".folder-rule-item").querySelector(".fr-add-cat").click();
+  }
+});
+
 // ---------- misc ----------
 
 function clear() {
@@ -1172,7 +1347,6 @@ async function init() {
   loadSchedules();
   refreshWatch();
 
-  // Connect WebSocket (it will stop polling once connected)
   connectWs();
 }
 

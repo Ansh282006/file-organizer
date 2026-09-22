@@ -1,4 +1,4 @@
-"""Export / import a single config bundle: rules + settings + schedules."""
+"""Export / import a single config bundle: rules + settings + schedules + folder rules."""
 
 from __future__ import annotations
 
@@ -11,6 +11,7 @@ import yaml
 import organizer
 import scheduler as scheduler_mod
 import settings as settings_mod
+from paths import FOLDER_RULES_FILE
 
 
 BUNDLE_VERSION = 1
@@ -28,6 +29,7 @@ def _read_yaml(path: Path) -> dict:
 
 
 def _write_yaml(path: Path, data: dict) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
         yaml.dump(data, sort_keys=False, default_flow_style=False),
         encoding="utf-8",
@@ -37,26 +39,25 @@ def _write_yaml(path: Path, data: dict) -> None:
 # ---------- export ----------
 
 def export_bundle() -> dict:
-    """Return a JSON-serialisable bundle of all config."""
     return {
         "version": BUNDLE_VERSION,
         "exported_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         "rules": _read_yaml(organizer.RULES_FILE),
         "settings": _read_yaml(settings_mod.SETTINGS_FILE),
         "schedules": _read_yaml(scheduler_mod.SCHEDULES_FILE) or {"schedules": []},
+        "folder_rules": _read_yaml(FOLDER_RULES_FILE) or {"folders": []},
     }
 
 
 # ---------- import ----------
 
 def import_bundle(bundle: dict, strategy: str = "replace") -> dict:
-    """Apply a config bundle. strategy: 'replace' or 'merge'."""
     if not isinstance(bundle, dict):
         raise ValueError("Bundle must be a JSON object")
     if strategy not in ("replace", "merge"):
         raise ValueError(f"Invalid strategy: {strategy}")
 
-    applied = {"rules": 0, "settings": False, "schedules": 0}
+    applied = {"rules": 0, "settings": False, "schedules": 0, "folder_rules": 0}
 
     rules = bundle.get("rules")
     if isinstance(rules, dict):
@@ -69,6 +70,10 @@ def import_bundle(bundle: dict, strategy: str = "replace") -> dict:
     schedules = bundle.get("schedules")
     if isinstance(schedules, dict):
         applied["schedules"] = _apply_schedules(schedules, strategy)
+
+    folder_rules_bundle = bundle.get("folder_rules")
+    if isinstance(folder_rules_bundle, dict):
+        applied["folder_rules"] = _apply_folder_rules(folder_rules_bundle, strategy)
 
     return applied
 
@@ -93,7 +98,6 @@ def _apply_rules(incoming: dict, strategy: str) -> int:
 
 
 def _apply_settings(incoming: dict, strategy: str) -> bool:
-    # Validate shape before writing
     skip_names = incoming.get("skip_names")
     if skip_names is not None and not isinstance(skip_names, list):
         return False
@@ -129,7 +133,6 @@ def _apply_schedules(incoming: dict, strategy: str) -> int:
         return 0
 
     if strategy == "replace":
-        # Fresh IDs, clear run history
         clean = []
         for s in new_schedules:
             if not isinstance(s, dict):
@@ -180,10 +183,47 @@ def _apply_schedules(incoming: dict, strategy: str) -> int:
     return added
 
 
+def _apply_folder_rules(incoming: dict, strategy: str) -> int:
+    import os as _os
+    from pathlib import Path as _Path
+
+    new_folders = incoming.get("folders") or []
+    if not isinstance(new_folders, list):
+        return 0
+
+    def key(p: str) -> str:
+        try:
+            return _os.path.normcase(str(_Path(p).expanduser().resolve()))
+        except Exception:
+            return _os.path.normcase(str(p))
+
+    if strategy == "replace":
+        _write_yaml(FOLDER_RULES_FILE, {"folders": new_folders})
+        return len(new_folders)
+
+    current = _read_yaml(FOLDER_RULES_FILE) or {"folders": []}
+    existing = [f for f in (current.get("folders") or []) if isinstance(f, dict)]
+    existing_keys = {key(f.get("path", "")) for f in existing}
+
+    added = 0
+    for f in new_folders:
+        if not isinstance(f, dict):
+            continue
+        p = f.get("path", "")
+        if not p or key(p) in existing_keys:
+            continue
+        existing.append(f)
+        existing_keys.add(key(p))
+        added += 1
+
+    current["folders"] = existing
+    _write_yaml(FOLDER_RULES_FILE, current)
+    return added
+
+
 # ---------- reset ----------
 
 def reset_all() -> dict:
-    """Wipe rules / settings / schedules back to defaults."""
     default_rules = {
         "Images": {"extensions": [".jpg", ".jpeg", ".png", ".gif", ".webp", ".heic", ".bmp", ".svg"]},
         "Documents": {"extensions": [".pdf", ".docx", ".doc", ".txt", ".md", ".xlsx", ".xls", ".pptx", ".csv"]},
@@ -196,4 +236,5 @@ def reset_all() -> dict:
     _write_yaml(organizer.RULES_FILE, default_rules)
     settings_mod.save_settings(settings_mod.Settings())
     _write_yaml(scheduler_mod.SCHEDULES_FILE, {"schedules": []})
+    _write_yaml(FOLDER_RULES_FILE, {"folders": []})
     return {"ok": True}

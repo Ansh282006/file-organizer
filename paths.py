@@ -19,11 +19,11 @@ _DATA_DIR = Path(_env_dir).resolve() if _env_dir else _SOURCE_DIR
 RULES_FILE = _DATA_DIR / "rules.yaml"
 SETTINGS_FILE = _DATA_DIR / "settings.yaml"
 SCHEDULES_FILE = _DATA_DIR / "schedules.yaml"
+FOLDER_RULES_FILE = _DATA_DIR / "folder_rules.yaml"
 LOG_DIR = _DATA_DIR / "logs"
 
 if _env_dir:
     _DATA_DIR.mkdir(parents=True, exist_ok=True)
-    # Seed rules.yaml from the source tree on first run
     _source_rules = _SOURCE_DIR / "rules.yaml"
     if not RULES_FILE.exists() and _source_rules.exists():
         try:

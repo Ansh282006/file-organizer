@@ -2,21 +2,21 @@
 
 from __future__ import annotations
 
-import json
 import threading
-import time
 import uuid
-from dataclasses import dataclass, field, asdict
+from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
 
 import yaml
 
 import events
+import folder_rules as fr
 from organizer import (
     MODE_EXTENSION,
     VALID_MODES,
     execute,
+    load_rules,
     scan,
 )
 from paths import SCHEDULES_FILE
@@ -161,8 +161,10 @@ def _run_one(schedule_id: str, path: Path | None = None) -> dict:
     s = load_settings()
 
     try:
+        rules = fr.resolve_rules_for(folder, load_rules())
         plan = scan(
             folder,
+            rules=rules,
             mode=mode,
             date_format=s.date_format,
             skip_names=set(s.skip_names),

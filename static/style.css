@@ -649,6 +649,83 @@ tr.renamed td.destination::after { content: " *"; }
 .rules-add-category { display: flex; gap: 10px; margin-top: 20px; }
 .rules-add-category input { flex: 1; }
 
+/* Folder rules panel */
+
+.folder-rules-panel {
+  margin-top: 40px; border-top: 1px solid var(--border); padding-top: 24px;
+}
+
+.folder-rules-header {
+  display: flex; justify-content: space-between; align-items: center;
+  margin-bottom: 16px;
+}
+
+.folder-rules-header h2 { font-size: 18px; font-weight: 600; }
+
+.folder-rules-hint { color: var(--muted); font-size: 13px; margin-bottom: 16px; }
+
+.folder-rules-add {
+  display: flex; gap: 10px; margin-bottom: 16px;
+}
+
+.folder-rules-empty {
+  padding: 20px; text-align: center; color: var(--muted);
+  font-size: 13px; border: 1px dashed var(--border);
+  border-radius: var(--radius);
+}
+
+.folder-rules-list {
+  display: flex; flex-direction: column; gap: 10px;
+}
+
+.folder-rule-item {
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+.folder-rule-header {
+  display: flex; align-items: center; gap: 10px;
+  padding: 12px 14px;
+}
+
+.folder-rule-path {
+  flex: 1;
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 13px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+
+.folder-rule-path .badge {
+  display: inline-block;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: rgba(79, 140, 255, 0.15);
+  color: #b4cfff;
+  border: 1px solid rgba(79, 140, 255, 0.35);
+  margin-right: 8px;
+}
+
+.folder-rule-body {
+  border-top: 1px solid var(--border);
+  padding: 12px 14px;
+  background: var(--surface);
+}
+
+.folder-rule-body .rules-row {
+  grid-template-columns: 120px 1fr;
+  padding: 10px 0;
+}
+
+.folder-rule-body .rules-cat { font-size: 13px; padding-top: 4px; }
+
+.folder-rule-actions { display: flex; gap: 6px; flex-shrink: 0; }
+.folder-rule-actions button { padding: 6px 10px; font-size: 12px; }
+
 /* Thumbnails in preview table */
 
 .thumb-cell {
@@ -713,8 +790,6 @@ tr.renamed td.destination::after { content: " *"; }
   color: #ffb4b4;
   border: 1px solid rgba(239, 68, 68, 0.3);
 }
-
-/* Live-flash animation for rows that just changed */
 
 @keyframes flash-in {
   0%   { background: rgba(79, 140, 255, 0.25); }

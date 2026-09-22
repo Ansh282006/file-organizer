@@ -11,6 +11,7 @@ from watchdog.events import FileSystemEventHandler, FileCreatedEvent
 from watchdog.observers import Observer
 
 import events
+import folder_rules as fr
 from organizer import (
     MODE_DATE,
     MODE_EXTENSION,
@@ -84,7 +85,8 @@ class _Handler(FileSystemEventHandler):
             if self.mode == MODE_DATE:
                 category = category_for_date(src.stat().st_mtime)
             else:
-                category = category_for(src.suffix, load_rules())
+                rules = fr.resolve_rules_for(self.folder, load_rules())
+                category = category_for(src.suffix, rules)
 
             dest_dir = self.folder / category
             raw_dest = dest_dir / src.name

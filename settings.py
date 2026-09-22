@@ -7,13 +7,12 @@ from pathlib import Path
 
 import yaml
 
+from paths import SETTINGS_FILE
 
-SETTINGS_FILE = Path(__file__).parent / "settings.yaml"
 
 DEFAULT_SKIP_NAMES = [".DS_Store", "Thumbs.db", "desktop.ini"]
 DEFAULT_SKIP_PREFIXES = ["."]
 
-# Date formats the UI offers for date mode
 DATE_FORMAT_OPTIONS = [
     {"value": "%Y-%m",     "label": "2026-09  (year-month)"},
     {"value": "%Y-%m-%d",  "label": "2026-09-22  (year-month-day)"},
@@ -59,7 +58,6 @@ def save_settings(settings: Settings, path: Path | None = None) -> None:
 
 
 def update_settings(partial: dict, path: Path | None = None) -> Settings:
-    """Merge a partial dict into the current settings and save."""
     current = load_settings(path)
     data = current.to_dict()
 

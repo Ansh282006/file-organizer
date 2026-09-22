@@ -19,10 +19,10 @@ from organizer import (
     execute,
     scan,
 )
+from paths import SCHEDULES_FILE
 from settings import load_settings
 
 
-SCHEDULES_FILE = Path(__file__).parent / "schedules.yaml"
 CHECK_INTERVAL = 30
 
 
@@ -51,6 +51,7 @@ def _load_raw(path: Path | None = None) -> dict:
 
 def _save_raw(data: dict, path: Path | None = None) -> None:
     path = path or SCHEDULES_FILE
+    path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
         yaml.dump(data, sort_keys=False, default_flow_style=False),
         encoding="utf-8",

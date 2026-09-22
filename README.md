@@ -1,29 +1,51 @@
-# File Organizer
+## Docker (no Python setup)
 
-A local web app that sorts a messy folder into clean subfolders — with a full preview, one-click undo, and editable rules. Runs entirely on your machine. Nothing is uploaded anywhere.
+Runs in a container. One command, no dependency install, no venv.
 
-![status](https://img.shields.io/badge/tests-36%20passing-brightgreen)
-![license](https://img.shields.io/badge/license-MIT-blue)
-
----
-
-## What it does
-
-Point it at a folder. It scans the files, shows you exactly where each one would go, and waits. Nothing moves until you click **Organize**. If you change your mind, click **Undo** — every file goes back where it came from.
-
-- **Preview before moving** — dry-run is the default
-- **Undo any run** — logged to JSON, reversed in one click
-- **Editable rules** — add categories and extensions from the UI
-- **Collision-safe** — `photo.jpg` becomes `photo_1.jpg` instead of overwriting
-- **Skips hidden files** — `.DS_Store`, dotfiles, `Thumbs.db`
-- **No build step** — pure Python + vanilla HTML/CSS/JS
-
----
-
-## Quick start
-
-### 1. Clone
+### 1. Build
 
 ```bash
-git clone https://github.com/Ansh282006/file-organizer.git
-cd file-organizer
+docker compose build
+```
+
+### 2. Choose a folder to organize
+
+Set `ORGANIZE_DIR` to the folder on your machine you want the app to see:
+
+**Windows (PowerShell):**
+```powershell
+$env:ORGANIZE_DIR = "C:\Users\anshb\Downloads"
+docker compose up
+```
+
+**macOS / Linux:**
+```bash
+ORGANIZE_DIR=/Users/anshb/Downloads docker compose up
+```
+
+### 3. Open
+
+```
+http://127.0.0.1:8000
+```
+
+**Inside the container, your folder appears as `/data`.** Paste `/data` in the folder input.
+
+### What persists
+
+| Item | Location | Survives container removal? |
+|---|---|---|
+| `rules.yaml`, `settings.yaml`, `schedules.yaml` | Docker volume `file-organizer-data` | ✅ Yes |
+| Undo history (`logs/*.json`) | Docker volume `file-organizer-data` | ✅ Yes |
+| Files in `ORGANIZE_DIR` | Your host folder (bind mount) | ✅ Yes |
+
+Reset all config:
+```bash
+docker compose down -v
+docker compose up
+```
+
+### Limitations
+
+- **OS trash is disabled inside Docker.** Files can't be sent to your host's Recycle Bin / Trash from a container — use **Quarantine duplicates** instead.
+- **File watching** (the "Watch folder" panel) works on Linux hosts. On macOS and Windows it depends on Docker Desktop's file-sharing implementation; if files aren't detected automatically, use **Schedules** or click **Scan** manually.

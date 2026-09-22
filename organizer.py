@@ -9,16 +9,15 @@ from pathlib import Path
 
 import yaml
 
+from paths import LOG_DIR, RULES_FILE
 
-RULES_FILE = Path(__file__).parent / "rules.yaml"
-LOG_DIR = Path(__file__).parent / "logs"
+
 FALLBACK_CATEGORY = "Misc"
 
 DEFAULT_SKIP_NAMES = {".DS_Store", "Thumbs.db", "desktop.ini"}
 DEFAULT_SKIP_PREFIXES = (".",)
 DEFAULT_DATE_FORMAT = "%Y-%m"
 
-# Kept for backwards-compat with code that imports these directly
 SKIP_NAMES = DEFAULT_SKIP_NAMES
 SKIP_PREFIXES = DEFAULT_SKIP_PREFIXES
 
@@ -80,7 +79,6 @@ def category_for(suffix: str, rules: list[Rule]) -> str:
 
 
 def category_for_date(timestamp: float, date_format: str = DEFAULT_DATE_FORMAT) -> str:
-    """Return the folder name for a file's mtime, using the given strftime format."""
     return datetime.fromtimestamp(timestamp).strftime(date_format)
 
 
@@ -241,8 +239,7 @@ def scan(
 # ---------- execution ----------
 
 def execute(plan: Plan) -> Path:
-    """Move all files in plan. Write a JSON log. Return log path."""
-    LOG_DIR.mkdir(exist_ok=True)
+    LOG_DIR.mkdir(parents=True, exist_ok=True)
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     log_path = LOG_DIR / f"organize_{timestamp}.json"
 

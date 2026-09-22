@@ -1,0 +1,19 @@
+services:
+  file-organizer:
+    build: .
+    image: file-organizer:latest
+    container_name: file-organizer
+    ports:
+      - "127.0.0.1:8000:8000"
+    volumes:
+      # Persistent config + undo history (survives container removal)
+      - file-organizer-data:/app/data
+      # The host folder you want to organize.
+      # Set ORGANIZE_DIR before running, or edit the default below.
+      - "${ORGANIZE_DIR:-./test-folder}:/data:rw"
+    environment:
+      - FO_DATA_DIR=/app/data
+    restart: unless-stopped
+
+volumes:
+  file-organizer-data:

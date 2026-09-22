@@ -1,10 +1,4 @@
-"""Send files to the OS recycle bin / trash.
-
-Uses `send2trash` which maps to:
-  - Windows: Recycle Bin
-  - macOS:   Trash (Finder)
-  - Linux:   XDG Trash (~/.local/share/Trash) or fallback
-"""
+"""Send files to the OS recycle bin / trash."""
 
 from __future__ import annotations
 
@@ -23,8 +17,15 @@ except ImportError:
     TrashPermissionError = OSError
 
 
+def _in_container() -> bool:
+    """Detect Docker / Podman."""
+    return Path("/.dockerenv").exists() or Path("/run/.containerenv").exists()
+
+
 def is_supported() -> bool:
-    """True if send2trash is installed and importable."""
+    """True if send2trash is available AND we're not inside a container."""
+    if _in_container():
+        return False
     return _SEND2TRASH_AVAILABLE
 
 
@@ -36,8 +37,10 @@ class TrashResult:
 
 
 def send_to_trash(path: Path) -> TrashResult:
-    """Send one file to the OS recycle bin. Returns a TrashResult."""
     p = Path(path)
+
+    if _in_container():
+        return TrashResult(str(p), False, "OS trash disabled inside container — use Quarantine instead")
 
     if not _SEND2TRASH_AVAILABLE:
         return TrashResult(str(p), False, "send2trash not installed")
@@ -57,7 +60,6 @@ def send_to_trash(path: Path) -> TrashResult:
 
 
 def trash_many(paths: list[Path]) -> dict:
-    """Send several files to trash. Returns a summary dict."""
     results = [send_to_trash(p) for p in paths]
     ok = [r for r in results if r.success]
     failed = [r for r in results if not r.success]

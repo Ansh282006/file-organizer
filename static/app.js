@@ -21,6 +21,7 @@ const els = {
   addCategoryBtn:$("#add-category-btn"),
   modeHint:      $("#mode-hint"),
   modeBtns:      document.querySelectorAll(".mode-btn"),
+  wsStatus:      $("#ws-status"),
   // watch
   watchBadge:    $("#watch-badge"),
   watchStartBtn: $("#watch-start-btn"),
@@ -71,11 +72,16 @@ let latestUndoableLog = null;
 let rulesVisible = false;
 let settingsVisible = false;
 let currentMode = "extension";
-let watchPollTimer = null;
 let currentSettings = null;
 let dateFormatOptions = [];
 let lastDupeResult = null;
 let trashSupported = false;
+
+// WebSocket + polling state
+let ws = null;
+let wsReconnectTimer = null;
+let wsConnected = false;
+let watchPollTimer = null;
 
 const MODE_HINTS = {
   extension: "Files go to folders like Images/, Documents/, Code/",
@@ -103,6 +109,150 @@ function escapeHtml(s) {
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;");
+}
+
+// ---------- WebSocket ----------
+
+function setWsState(state) {
+  els.wsStatus.className = `ws-status ${state}`;
+  els.wsStatus.textContent = state === "connected" ? "live" :
+                             state === "connecting" ? "connecting…" :
+                             "offline";
+}
+
+function connectWs() {
+  if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) return;
+
+  setWsState("connecting");
+  const proto = location.protocol === "https:" ? "wss:" : "ws:";
+  ws = new WebSocket(`${proto}//${location.host}/ws`);
+
+  ws.onopen = () => {
+    wsConnected = true;
+    setWsState("connected");
+    if (wsReconnectTimer) { clearTimeout(wsReconnectTimer); wsReconnectTimer = null; }
+    // Stop polling while live
+    stopWatchPolling();
+  };
+
+  ws.onclose = () => {
+    wsConnected = false;
+    setWsState("disconnected");
+    // Fall back to polling
+    refreshWatch();
+    startWatchPolling();
+    // Reconnect after 2s
+    if (wsReconnectTimer) clearTimeout(wsReconnectTimer);
+    wsReconnectTimer = setTimeout(connectWs, 2000);
+  };
+
+  ws.onerror = () => {
+    // Let onclose handle the recovery
+  };
+
+  ws.onmessage = (ev) => {
+    let msg;
+    try { msg = JSON.parse(ev.data); } catch { return; }
+    handleWsEvent(msg);
+  };
+}
+
+function handleWsEvent(msg) {
+  const { type, data } = msg;
+
+  switch (type) {
+    case "hello":
+      break;
+
+    case "watch_run":
+      appendWatchRun(data);
+      flashWatchPanel();
+      // A watch run created a new log
+      loadLogs();
+      break;
+
+    case "watch_error":
+      showStatus(`Watch error on ${data.file}: ${data.error}`, "error");
+      break;
+
+    case "watch_started":
+      refreshWatch();
+      showStatus(`Watching ${data.folder}`, "success");
+      break;
+
+    case "watch_stopped":
+      refreshWatch();
+      break;
+
+    case "organize":
+      loadLogs();
+      break;
+
+    case "undo":
+      loadLogs();
+      break;
+
+    case "quarantine":
+      loadLogs();
+      break;
+
+    case "trash":
+      if (data.trashed) showStatus(`Trashed ${data.trashed} file(s)`, "success");
+      break;
+
+    case "schedule_run":
+      loadSchedules();
+      loadLogs();
+      showStatus(`Scheduled run — ${data.moved} file(s) from ${data.folder}`, "success");
+      break;
+
+    case "schedule_error":
+      loadSchedules();
+      showStatus(`Scheduled run failed: ${data.error}`, "error");
+      break;
+
+    case "schedule_added":
+    case "schedule_updated":
+    case "schedule_removed":
+      loadSchedules();
+      break;
+
+    case "settings_updated":
+      // Reflect settings changes if the panel is open
+      if (settingsVisible) loadSettings();
+      break;
+
+    case "rules_updated":
+      if (rulesVisible) loadRules();
+      break;
+
+    case "config_imported":
+    case "config_reset":
+      loadSettings();
+      if (rulesVisible) loadRules();
+      loadSchedules();
+      break;
+  }
+}
+
+function appendWatchRun(run) {
+  // Insert at top of the list without full reload
+  if (els.watchRuns.classList.contains("hidden")) {
+    els.watchRuns.classList.remove("hidden");
+    els.watchRunsList.innerHTML = "";
+  }
+  const li = document.createElement("li");
+  li.className = "row-flash";
+  li.innerHTML = `<span class="time">${escapeHtml(run.time)}</span>${escapeHtml(run.file)}<span class="cat">→ ${escapeHtml(run.category)}</span>`;
+  els.watchRunsList.insertBefore(li, els.watchRunsList.firstChild);
+}
+
+function flashWatchPanel() {
+  // Subtle pulse to draw attention
+  const panel = els.watchRuns.closest(".watch-panel");
+  if (!panel) return;
+  panel.classList.add("row-flash");
+  setTimeout(() => panel.classList.remove("row-flash"), 1200);
 }
 
 // ---------- mode toggle ----------
@@ -373,7 +523,6 @@ async function watchStart() {
     const data = await res.json();
     if (!res.ok) { showStatus(data.detail || `Error ${res.status}`, "error"); return; }
     renderWatch(data);
-    startWatchPolling();
   } catch (err) {
     showStatus(`Network error: ${err.message}`, "error");
   }
@@ -385,15 +534,16 @@ async function watchStop() {
     const res = await fetch("/api/watch/stop", { method: "POST" });
     const data = await res.json();
     renderWatch(data);
-    stopWatchPolling();
   } catch (err) {
     showStatus(`Network error: ${err.message}`, "error");
   }
 }
 
+// Polling fallback — only active when WebSocket is not connected
 function startWatchPolling() {
+  if (wsConnected) return;
   stopWatchPolling();
-  watchPollTimer = setInterval(refreshWatch, 2000);
+  watchPollTimer = setInterval(refreshWatch, 3000);
 }
 
 function stopWatchPolling() {
@@ -418,8 +568,7 @@ function renderDuplicates(result) {
   if (result.total_groups === 0) {
     els.dupesBadge.textContent = "CLEAN";
     els.dupesBadge.className = "dupes-badge clean";
-    els.dupesStatus.textContent =
-      `Scanned ${result.total_files} file(s) — no duplicates found.`;
+    els.dupesStatus.textContent = `Scanned ${result.total_files} file(s) — no duplicates found.`;
     els.dupesStatus.classList.remove("hidden");
     els.dupesGroups.classList.add("hidden");
     els.quarantineBtn.disabled = true;
@@ -667,9 +816,10 @@ els.schedList.addEventListener("click", async (e) => {
 
 els.addScheduleBtn.addEventListener("click", addSchedule);
 
+// Fallback-only: refresh schedules every 30s if WS is down
 setInterval(() => {
-  if (!document.hidden) loadSchedules();
-}, 15000);
+  if (!document.hidden && !wsConnected) loadSchedules();
+}, 30000);
 
 // ---------- settings ----------
 
@@ -1011,7 +1161,6 @@ async function init() {
   currentSettings = s?.settings || null;
   dateFormatOptions = s?.date_format_options || [];
 
-  // Check trash support
   try {
     const t = await fetch("/api/trash/status").then(r => r.json());
     trashSupported = t.supported === true;
@@ -1021,11 +1170,16 @@ async function init() {
 
   loadLogs();
   loadSchedules();
-  refreshWatch().then(() => {
-    fetch("/api/watch/status").then(r => r.json()).then(d => {
-      if (d.watching) startWatchPolling();
-    });
-  });
+  refreshWatch();
+
+  // Connect WebSocket (it will stop polling once connected)
+  connectWs();
 }
 
 init();
+
+window.addEventListener("beforeunload", () => {
+  if (ws) {
+    try { ws.close(); } catch {}
+  }
+});

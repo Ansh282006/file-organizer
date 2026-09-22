@@ -10,6 +10,7 @@ from pathlib import Path
 from watchdog.events import FileSystemEventHandler, FileCreatedEvent
 from watchdog.observers import Observer
 
+import events
 from organizer import (
     MODE_DATE,
     MODE_EXTENSION,
@@ -25,9 +26,9 @@ from organizer import (
 )
 
 
-STABILITY_TIMEOUT = 5.0     # seconds to wait for file size to settle
-STABILITY_INTERVAL = 0.3    # polling interval
-STABILITY_ROUNDS = 2        # consecutive identical size readings = stable
+STABILITY_TIMEOUT = 5.0
+STABILITY_INTERVAL = 0.3
+STABILITY_ROUNDS = 2
 
 
 class _Handler(FileSystemEventHandler):
@@ -43,7 +44,6 @@ class _Handler(FileSystemEventHandler):
             return
 
         src = Path(event.src_path)
-        # Only files directly in the watched folder, not in subfolders
         try:
             if src.parent.resolve() != self.folder.resolve():
                 return
@@ -53,7 +53,6 @@ class _Handler(FileSystemEventHandler):
         if should_skip(src):
             return
 
-        # Wait for the file to finish writing before we touch it
         if not self._wait_stable(src):
             return
 
@@ -78,7 +77,7 @@ class _Handler(FileSystemEventHandler):
                 stable = 0
                 last_size = size
             time.sleep(STABILITY_INTERVAL)
-        return True  # give up waiting, process anyway
+        return True
 
     def _organize_one(self, src: Path) -> None:
         try:
@@ -115,8 +114,6 @@ class WatchManager:
         self._errors: list[dict] = []
         self._total = 0
 
-    # ---------- control ----------
-
     def start(self, folder: Path, mode: str = MODE_EXTENSION) -> dict:
         if mode not in VALID_MODES:
             raise ValueError(f"Invalid mode: {mode}")
@@ -141,11 +138,19 @@ class WatchManager:
             self._errors = []
             self._total = 0
 
+        events.publish("watch_started", {
+            "folder": str(folder),
+            "mode": mode,
+            "started_at": self._started_at,
+        })
         return self.status()
 
     def stop(self) -> dict:
         with self._lock:
+            was_watching = self._observer is not None
             self._stop_locked()
+        if was_watching:
+            events.publish("watch_stopped", {})
         return self.status()
 
     def _stop_locked(self) -> None:
@@ -158,8 +163,6 @@ class WatchManager:
             self._observer = None
         self._folder = None
         self._started_at = None
-
-    # ---------- status ----------
 
     def status(self) -> dict:
         with self._lock:
@@ -174,22 +177,24 @@ class WatchManager:
                 "recent_errors": list(self._errors[-10:]),
             }
 
-    # ---------- internal recording ----------
-
     def _record_run(self, filename: str, category: str, log_file: str) -> None:
         with self._lock:
             self._total += 1
-            self._runs.append({
+            entry = {
                 "time": datetime.now().strftime("%H:%M:%S"),
                 "file": filename,
                 "category": category,
                 "log": log_file,
-            })
+            }
+            self._runs.append(entry)
+        events.publish("watch_run", entry)
 
     def _record_error(self, filename: str, error: str) -> None:
         with self._lock:
-            self._errors.append({
+            entry = {
                 "time": datetime.now().strftime("%H:%M:%S"),
                 "file": filename,
                 "error": error,
-            })
+            }
+            self._errors.append(entry)
+        events.publish("watch_error", entry)

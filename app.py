@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import asyncio
+import json
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, WebSocket
 from fastapi.responses import Response
 from fastapi.staticfiles import StaticFiles
 
+import events
 from config_io import export_bundle, import_bundle, reset_all
 from duplicates import find_duplicates, plan_quarantine
 from organizer import (
@@ -38,21 +41,27 @@ from thumbnails import generate_thumbnail, is_image
 from trash import is_supported as trash_supported, trash_many
 from watcher import WatchManager
 
-app = FastAPI(title="File Organizer", version="0.8.0")
+app = FastAPI(title="File Organizer", version="0.9.0")
 
 STATIC_DIR = Path(__file__).parent / "static"
 watch_manager = WatchManager()
 scheduler_service = SchedulerService()
 
+_broadcast_task: asyncio.Task | None = None
+
 
 @app.on_event("startup")
-def _start_scheduler():
+async def _startup():
+    global _broadcast_task
+    _broadcast_task = asyncio.create_task(events.broadcast_loop())
     scheduler_service.start()
 
 
 @app.on_event("shutdown")
-def _stop_scheduler():
+async def _shutdown():
     scheduler_service.stop()
+    if _broadcast_task:
+        _broadcast_task.cancel()
 
 
 def _scan_with_settings(path: str, mode: str | None = None) -> Plan:
@@ -67,6 +76,13 @@ def _scan_with_settings(path: str, mode: str | None = None) -> Plan:
     )
 
 
+# ---------- WebSocket ----------
+
+@app.websocket("/ws")
+async def ws_endpoint(websocket: WebSocket):
+    await events.handle_connection(websocket)
+
+
 # ---------- API ----------
 
 @app.get("/api/health")
@@ -75,6 +91,7 @@ def api_health():
         "status": "ok",
         "scheduler_running": scheduler_service.running,
         "trash_supported": trash_supported(),
+        "ws_connections": events.connection_count(),
     }
 
 
@@ -135,6 +152,12 @@ def api_organize(payload: dict):
     if plan.total == 0:
         return {"moved": 0, "errors": [], "log_file": None, "message": "Nothing to organize"}
     log_path = execute(plan)
+    events.publish("organize", {
+        "folder": str(plan.folder),
+        "moved": plan.total,
+        "mode": plan.mode,
+        "log": log_path.name,
+    })
     return {
         "moved": plan.total,
         "renamed": plan.renamed,
@@ -167,6 +190,10 @@ def api_undo(payload: dict | None = None):
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"{type(e).__name__}: {e}")
+    events.publish("undo", {
+        "log": result.get("log_file"),
+        "restored": result.get("restored", 0),
+    })
     return result
 
 
@@ -179,17 +206,13 @@ def api_trash_status():
 
 @app.post("/api/trash")
 def api_trash(payload: dict):
-    """Send a list of file paths to the OS recycle bin."""
     if not trash_supported():
-        raise HTTPException(
-            status_code=501,
-            detail="OS trash not available (install send2trash)",
-        )
+        raise HTTPException(status_code=501, detail="OS trash not available")
     paths = payload.get("paths")
     if not isinstance(paths, list) or not paths:
         raise HTTPException(status_code=400, detail="Missing 'paths' list")
-
     result = trash_many([Path(p) for p in paths])
+    events.publish("trash", {"trashed": result["trashed"], "failed": result["failed"]})
     return result
 
 
@@ -198,7 +221,6 @@ def api_trash(payload: dict):
 @app.get("/api/config/export")
 def api_config_export():
     bundle = export_bundle()
-    import json
     body = json.dumps(bundle, indent=2)
     ts = bundle["exported_at"].replace(":", "").replace(" ", "_").replace("-", "")
     return Response(
@@ -220,12 +242,14 @@ def api_config_import(payload: dict):
         applied = import_bundle(bundle, strategy=strategy)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+    events.publish("config_imported", {"applied": applied})
     return {"ok": True, "applied": applied}
 
 
 @app.post("/api/config/reset")
 def api_config_reset():
     reset_all()
+    events.publish("config_reset", {})
     return {"ok": True}
 
 
@@ -262,6 +286,11 @@ def api_duplicates_quarantine(payload: dict):
     if plan.total == 0:
         return {"moved": 0, "log_file": None, "message": "Nothing to quarantine"}
     log_path = execute(plan)
+    events.publish("quarantine", {
+        "folder": str(plan.folder),
+        "moved": plan.total,
+        "log": log_path.name,
+    })
     return {
         "moved": plan.total,
         "log_file": log_path.name,
@@ -271,17 +300,11 @@ def api_duplicates_quarantine(payload: dict):
 
 @app.post("/api/duplicates/trash")
 def api_duplicates_trash(payload: dict):
-    """Send duplicate extras to OS recycle bin instead of _duplicates/."""
     if not trash_supported():
-        raise HTTPException(
-            status_code=501,
-            detail="OS trash not available (install send2trash)",
-        )
-
+        raise HTTPException(status_code=501, detail="OS trash not available")
     path = payload.get("path")
     if not path:
         raise HTTPException(status_code=400, detail="Missing 'path' in request body")
-
     s = load_settings()
     try:
         result = find_duplicates(Path(path), skip_names=set(s.skip_names), skip_prefixes=tuple(s.skip_prefixes))
@@ -306,6 +329,7 @@ def api_duplicates_trash(payload: dict):
         f"Sent {trash_result['trashed']} duplicate(s) to OS trash"
         + (f" ({trash_result['failed']} failed)" if trash_result.get("failed") else "")
     )
+    events.publish("trash", {"trashed": trash_result["trashed"], "failed": trash_result["failed"]})
     return trash_result
 
 
@@ -380,6 +404,7 @@ def api_update_settings(payload: dict):
         updated = update_settings(payload)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+    events.publish("settings_updated", {"settings": updated.to_dict()})
     return {"ok": True, "settings": updated.to_dict()}
 
 
@@ -431,6 +456,7 @@ def api_add_extension(payload: dict):
         raise HTTPException(status_code=404, detail=str(e))
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+    events.publish("rules_updated", {})
     return {"ok": True}
 
 
@@ -444,6 +470,7 @@ def api_remove_extension(payload: dict):
         remove_extension(category, extension)
     except KeyError as e:
         raise HTTPException(status_code=404, detail=str(e))
+    events.publish("rules_updated", {})
     return {"ok": True}
 
 
@@ -456,6 +483,7 @@ def api_add_category(payload: dict):
         add_category(name, payload.get("extensions") or [])
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+    events.publish("rules_updated", {})
     return {"ok": True}
 
 
@@ -468,6 +496,7 @@ def api_remove_category(payload: dict):
         remove_category(name)
     except KeyError as e:
         raise HTTPException(status_code=404, detail=str(e))
+    events.publish("rules_updated", {})
     return {"ok": True}
 
 

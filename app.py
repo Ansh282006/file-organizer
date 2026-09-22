@@ -14,6 +14,7 @@ import events
 import folder_rules as fr
 from config_io import export_bundle, import_bundle, reset_all
 from duplicates import find_duplicates, plan_quarantine
+from largefiles import find_large_files, plan_quarantine as plan_large_quarantine
 from organizer import (
     MODE_EXTENSION,
     VALID_MODES,
@@ -42,7 +43,7 @@ from thumbnails import generate_thumbnail, is_image
 from trash import is_supported as trash_supported, trash_many
 from watcher import WatchManager
 
-app = FastAPI(title="File Organizer", version="1.0.0")
+app = FastAPI(title="File Organizer", version="1.1.0")
 
 STATIC_DIR = Path(__file__).parent / "static"
 watch_manager = WatchManager()
@@ -66,7 +67,6 @@ async def _shutdown():
 
 
 def _resolved_rules(path: str | Path) -> list:
-    """Global rules merged with folder-specific rules (if any)."""
     return fr.resolve_rules_for(path, load_rules())
 
 
@@ -338,6 +338,78 @@ def api_duplicates_trash(payload: dict):
     )
     events.publish("trash", {"trashed": trash_result["trashed"], "failed": trash_result["failed"]})
     return trash_result
+
+
+# ---------- large files ----------
+
+@app.get("/api/large-files")
+def api_large_files(
+    path: str = Query(...),
+    min_mb: float = Query(100.0),
+):
+    if min_mb < 0:
+        raise HTTPException(status_code=400, detail="min_mb must be >= 0")
+    s = load_settings()
+    try:
+        return find_large_files(
+            Path(path),
+            min_bytes=int(min_mb * 1024 * 1024),
+            skip_names=set(s.skip_names),
+            skip_prefixes=tuple(s.skip_prefixes),
+        )
+    except NotADirectoryError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except PermissionError as e:
+        raise HTTPException(status_code=403, detail=f"Permission denied: {e}")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"{type(e).__name__}: {e}")
+
+
+@app.post("/api/large-files/quarantine")
+def api_large_files_quarantine(payload: dict):
+    path = payload.get("path")
+    files = payload.get("files")
+    if not path:
+        raise HTTPException(status_code=400, detail="Missing 'path'")
+    if not isinstance(files, list) or not files:
+        raise HTTPException(status_code=400, detail="Missing 'files' list")
+
+    plan = plan_large_quarantine(Path(path), files)
+    if plan.total == 0:
+        return {"moved": 0, "log_file": None, "message": "Nothing to quarantine"}
+
+    log_path = execute(plan)
+    events.publish("quarantine", {
+        "folder": str(plan.folder),
+        "moved": plan.total,
+        "log": log_path.name,
+    })
+    return {
+        "moved": plan.total,
+        "log_file": log_path.name,
+        "message": f"Moved {plan.total} large file(s) into _large_files/",
+    }
+
+
+@app.post("/api/large-files/trash")
+def api_large_files_trash(payload: dict):
+    if not trash_supported():
+        raise HTTPException(status_code=501, detail="OS trash not available")
+    files = payload.get("files")
+    if not isinstance(files, list) or not files:
+        raise HTTPException(status_code=400, detail="Missing 'files' list")
+
+    paths = [Path(f["path"]) for f in files if isinstance(f, dict) and f.get("path")]
+    if not paths:
+        return {"trashed": 0, "failed": 0, "message": "Nothing to trash"}
+
+    result = trash_many(paths)
+    result["message"] = (
+        f"Sent {result['trashed']} large file(s) to OS trash"
+        + (f" ({result['failed']} failed)" if result.get("failed") else "")
+    )
+    events.publish("trash", {"trashed": result["trashed"], "failed": result["failed"]})
+    return result
 
 
 # ---------- folder rules ----------

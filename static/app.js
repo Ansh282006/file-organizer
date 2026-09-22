@@ -42,6 +42,16 @@ const els = {
   dupesBadge:    $("#dupes-badge"),
   dupesStatus:   $("#dupes-status"),
   dupesGroups:   $("#dupes-groups"),
+  // large files
+  findLargeBtn:        $("#find-largefiles-btn"),
+  quarantineLargeBtn:  $("#quarantine-largefiles-btn"),
+  trashLargeBtn:       $("#trash-largefiles-btn"),
+  largeMinMb:          $("#largefiles-min-mb"),
+  largeBadge:          $("#largefiles-badge"),
+  largeStatus:         $("#largefiles-status"),
+  largeTableWrap:      $("#largefiles-table-wrap"),
+  largeBody:           $("#largefiles-body"),
+  largeSelectAll:      $("#largefiles-select-all"),
   // schedules
   schedBadge:       $("#scheduler-badge"),
   schedFolder:      $("#sched-folder"),
@@ -85,6 +95,8 @@ let dateFormatOptions = [];
 let lastDupeResult = null;
 let trashSupported = false;
 let folderRules = [];
+let largeFilesResult = null;
+let largeFilesSelected = new Set();
 
 let ws = null;
 let wsReconnectTimer = null;
@@ -522,7 +534,7 @@ function stopWatchPolling() {
 els.watchStartBtn.addEventListener("click", watchStart);
 els.watchStopBtn.addEventListener("click", watchStop);
 
-// ---------- duplicates ----------
+// ---------- format helpers ----------
 
 function formatBytes(n) {
   if (n < 1024) return `${n} B`;
@@ -530,6 +542,8 @@ function formatBytes(n) {
   if (n < 1024 * 1024 * 1024) return `${(n / (1024 * 1024)).toFixed(1)} MB`;
   return `${(n / (1024 * 1024 * 1024)).toFixed(2)} GB`;
 }
+
+// ---------- duplicates ----------
 
 function renderDuplicates(result) {
   lastDupeResult = result;
@@ -670,6 +684,189 @@ async function trashDuplicates() {
 els.findDupesBtn.addEventListener("click", findDuplicates);
 els.quarantineBtn.addEventListener("click", quarantineDuplicates);
 els.trashDupesBtn.addEventListener("click", trashDuplicates);
+
+// ---------- large files ----------
+
+function updateLargeFilesButtons() {
+  const count = largeFilesSelected.size;
+  els.quarantineLargeBtn.disabled = count === 0;
+  els.trashLargeBtn.disabled = count === 0 || !trashSupported;
+  els.quarantineLargeBtn.textContent = count > 0
+    ? `Quarantine ${count} selected`
+    : "Quarantine selected";
+  els.trashLargeBtn.textContent = count > 0
+    ? `Trash ${count} selected`
+    : "Trash selected";
+}
+
+function renderLargeFiles(result) {
+  largeFilesResult = result;
+  largeFilesSelected.clear();
+  updateLargeFilesButtons();
+
+  if (result.matched === 0) {
+    els.largeBadge.textContent = "CLEAN";
+    els.largeBadge.className = "largefiles-badge clean";
+    els.largeStatus.textContent =
+      `Scanned ${result.total_scanned} file(s) — no files ≥ ${formatBytes(result.min_bytes)}.`;
+    els.largeStatus.classList.remove("hidden");
+    els.largeTableWrap.classList.add("hidden");
+    return;
+  }
+
+  els.largeBadge.textContent = `${result.matched} FILE${result.matched === 1 ? "" : "S"}`;
+  els.largeBadge.className = "largefiles-badge found";
+  els.largeStatus.textContent =
+    `Scanned ${result.total_scanned} file(s) — ${result.matched} large file(s), ${formatBytes(result.total_matched_bytes)} total`
+    + (result.truncated ? " (top 500 shown)" : ".");
+  els.largeStatus.classList.remove("hidden");
+  els.largeTableWrap.classList.remove("hidden");
+  els.largeSelectAll.checked = false;
+
+  els.largeBody.innerHTML = result.files.map((f, i) => `
+    <tr>
+      <td class="lf-check">
+        <input type="checkbox" class="lf-checkbox" data-index="${i}" />
+      </td>
+      <td><span class="lf-path" title="${escapeHtml(f.path)}">${escapeHtml(f.rel_path)}</span></td>
+      <td class="lf-size">${formatBytes(f.size)}</td>
+    </tr>
+  `).join("");
+}
+
+async function findLargeFiles() {
+  const path = els.folder.value.trim();
+  if (!path) { showStatus("Enter a folder path first.", "error"); return; }
+
+  const minMb = parseFloat(els.largeMinMb.value);
+  if (isNaN(minMb) || minMb < 0) {
+    showStatus("Minimum size must be a positive number.", "error");
+    return;
+  }
+
+  els.findLargeBtn.disabled = true;
+  els.findLargeBtn.textContent = "Scanning...";
+  els.largeStatus.classList.add("hidden");
+  els.largeTableWrap.classList.add("hidden");
+
+  try {
+    const url = `/api/large-files?path=${encodeURIComponent(path)}&min_mb=${minMb}`;
+    const res = await fetch(url);
+    const data = await res.json();
+    if (!res.ok) { showStatus(data.detail || `Error ${res.status}`, "error"); return; }
+    renderLargeFiles(data);
+  } catch (err) {
+    showStatus(`Network error: ${err.message}`, "error");
+  } finally {
+    els.findLargeBtn.disabled = false;
+    els.findLargeBtn.textContent = "Scan";
+  }
+}
+
+function selectedLargeFiles() {
+  if (!largeFilesResult) return [];
+  return Array.from(largeFilesSelected).map(i => largeFilesResult.files[i]);
+}
+
+async function quarantineLargeFiles() {
+  const path = els.folder.value.trim();
+  const files = selectedLargeFiles();
+  if (!path || files.length === 0) return;
+
+  const confirmed = confirm(
+    `Move ${files.length} large file(s) into _large_files/?\n\n` +
+    `Structure under _large_files/ mirrors the original paths. Nothing is deleted.\n` +
+    `You can undo this from the History panel.`
+  );
+  if (!confirmed) return;
+
+  els.quarantineLargeBtn.disabled = true;
+  els.quarantineLargeBtn.textContent = "Moving...";
+  hideStatus();
+
+  try {
+    const res = await fetch("/api/large-files/quarantine", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ path, files }),
+    });
+    const data = await res.json();
+    if (!res.ok) { showStatus(data.detail || `Error ${res.status}`, "error"); return; }
+
+    showStatus(`${data.message}` + (data.log_file ? ` — log: ${data.log_file}` : ""), "success");
+    await findLargeFiles();
+    await loadLogs();
+  } catch (err) {
+    showStatus(`Network error: ${err.message}`, "error");
+  } finally {
+    updateLargeFilesButtons();
+  }
+}
+
+async function trashLargeFiles() {
+  const files = selectedLargeFiles();
+  if (files.length === 0) return;
+
+  const confirmed = confirm(
+    `Send ${files.length} large file(s) to the OS Recycle Bin / Trash?\n\n` +
+    `Files can be restored from your system Recycle Bin or Trash — but not from this app.`
+  );
+  if (!confirmed) return;
+
+  els.trashLargeBtn.disabled = true;
+  els.trashLargeBtn.textContent = "Sending...";
+  hideStatus();
+
+  try {
+    const res = await fetch("/api/large-files/trash", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ files }),
+    });
+    const data = await res.json();
+    if (!res.ok) { showStatus(data.detail || `Error ${res.status}`, "error"); return; }
+
+    showStatus(data.message, "success");
+    await findLargeFiles();
+  } catch (err) {
+    showStatus(`Network error: ${err.message}`, "error");
+  } finally {
+    updateLargeFilesButtons();
+  }
+}
+
+els.findLargeBtn.addEventListener("click", findLargeFiles);
+els.quarantineLargeBtn.addEventListener("click", quarantineLargeFiles);
+els.trashLargeBtn.addEventListener("click", trashLargeFiles);
+
+els.largeBody.addEventListener("change", (e) => {
+  const cb = e.target.closest(".lf-checkbox");
+  if (!cb) return;
+  const idx = parseInt(cb.dataset.index, 10);
+  if (cb.checked) largeFilesSelected.add(idx);
+  else largeFilesSelected.delete(idx);
+  updateLargeFilesButtons();
+
+  // Update select-all state
+  if (largeFilesResult) {
+    els.largeSelectAll.checked = largeFilesSelected.size === largeFilesResult.files.length;
+    els.largeSelectAll.indeterminate =
+      largeFilesSelected.size > 0 && largeFilesSelected.size < largeFilesResult.files.length;
+  }
+});
+
+els.largeSelectAll.addEventListener("change", () => {
+  if (!largeFilesResult) return;
+  if (els.largeSelectAll.checked) {
+    largeFilesResult.files.forEach((_, i) => largeFilesSelected.add(i));
+  } else {
+    largeFilesSelected.clear();
+  }
+  els.largeBody.querySelectorAll(".lf-checkbox").forEach((cb, i) => {
+    cb.checked = largeFilesSelected.has(i);
+  });
+  updateLargeFilesButtons();
+});
 
 // ---------- schedules ----------
 

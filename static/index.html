@@ -114,6 +114,41 @@
       <div id="dupes-groups" class="dupes-groups hidden"></div>
     </section>
 
+    <section class="largefiles-panel">
+      <div class="largefiles-header">
+        <h2>Large files</h2>
+        <span id="largefiles-badge" class="largefiles-badge">—</span>
+      </div>
+      <p class="largefiles-hint">
+        Recursively finds files larger than the threshold.
+        <strong>Quarantine</strong> moves them into <code>_large_files/</code> preserving structure (undoable).
+        <strong>Send to trash</strong> moves them to your OS Recycle Bin / Trash.
+      </p>
+      <div class="largefiles-controls">
+        <label class="largefiles-size">
+          Minimum size:
+          <input id="largefiles-min-mb" type="number" min="1" value="100" />
+          MB
+        </label>
+        <button id="find-largefiles-btn" class="primary">Scan</button>
+        <button id="quarantine-largefiles-btn" class="secondary" disabled>Quarantine selected</button>
+        <button id="trash-largefiles-btn" class="danger" disabled>Trash selected</button>
+      </div>
+      <p id="largefiles-status" class="largefiles-status hidden"></p>
+      <div id="largefiles-table-wrap" class="largefiles-table-wrap hidden">
+        <table class="largefiles-table">
+          <thead>
+            <tr>
+              <th class="lf-check"><input type="checkbox" id="largefiles-select-all" /></th>
+              <th>File</th>
+              <th class="lf-size">Size</th>
+            </tr>
+          </thead>
+          <tbody id="largefiles-body"></tbody>
+        </table>
+      </div>
+    </section>
+
     <section class="schedules-panel">
       <div class="schedules-header">
         <h2>Schedules</h2>

@@ -30,6 +30,7 @@ from organizer import (
     undo,
     Plan,
 )
+from paths import LOG_DIR
 from scheduler import (
     SchedulerService,
     add_schedule,
@@ -184,7 +185,7 @@ def api_logs():
 def api_undo(payload: dict | None = None):
     log_name = (payload or {}).get("log_file")
     if log_name:
-        log_path = Path(__file__).parent / "logs" / log_name
+        log_path = LOG_DIR / log_name
     else:
         log_path = latest_undoable_log()
     if not log_path:

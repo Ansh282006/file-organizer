@@ -265,10 +265,8 @@ function connectWs() {
 
   ws.onclose = (e) => {
     wsConnected = false;
-    // If the server closed with 1008 (policy violation) → likely auth required
     if (e && e.code === 1008) {
       setWsState("disconnected");
-      // Re-check auth; if it's now required and we're not authed, show login
       checkAuth().then(s => {
         if (s.required && !s.authenticated) {
           AUTH.required = true;
@@ -556,13 +554,19 @@ function renderPlan(plan) {
   els.organizeBtn.disabled = false;
 
   const rows = plan.items.map(it => {
-    const thumb = it.is_image
-      ? `<img class="thumb" src="/api/thumbnail?path=${encodeURIComponent(it.source)}" alt="" loading="lazy" onerror="this.style.display='none'" />`
-      : `<span class="filetype">${filetypeBadge(it.source_name)}</span>`;
+    const hasThumb = it.is_image || it.is_video;
+    const badge = filetypeBadge(it.source_name);
+    const cell = hasThumb
+      ? `<div class="thumb-wrap">
+           <span class="filetype">${badge}</span>
+           <img class="thumb" src="/api/thumbnail?path=${encodeURIComponent(it.source)}"
+                alt="" loading="lazy" onerror="this.style.display='none'" />
+         </div>`
+      : `<span class="filetype">${badge}</span>`;
 
     return `
       <tr class="${it.renamed ? "renamed" : ""}">
-        <td class="thumb-cell">${thumb}</td>
+        <td class="thumb-cell">${cell}</td>
         <td>${escapeHtml(it.source_name)}</td>
         <td class="arrow">→</td>
         <td class="destination">${escapeHtml(it.destination_rel)}</td>
@@ -1139,7 +1143,6 @@ function renderSettings() {
   renderChips(els.skipNamesChips, currentSettings.skip_names || [], "skip_names");
   renderChips(els.skipPrefixesChips, currentSettings.skip_prefixes || [], "skip_prefixes");
 
-  // Password status
   if (currentSettings.has_password) {
     els.passwordStatus.textContent = "Password is set.";
     els.passwordStatus.className = "password-status ok";
@@ -1172,7 +1175,6 @@ async function saveSettings(partial) {
     currentSettings = data.settings;
     renderSettings();
     flashSaved();
-    // Auth might have just been enabled/disabled — refresh status
     await checkAuth();
     updateLogoutVisibility();
   } catch (err) {
@@ -1230,7 +1232,6 @@ els.newSkipPrefix.addEventListener("keydown", (e) => {
   if (e.key === "Enter") els.addSkipPrefix.click();
 });
 
-// Password controls
 els.setPasswordBtn.addEventListener("click", async () => {
   const pw = els.newPassword.value;
   if (!pw) { showStatus("Enter a password first.", "error"); return; }

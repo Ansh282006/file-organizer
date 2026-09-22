@@ -1,13 +1,14 @@
-"""Tests for password protection."""
+"""Tests for password protection and session persistence."""
 
 import pytest
-
 from fastapi.testclient import TestClient
 
 import auth
 
 
-# ---------- password hashing ----------
+# ============================================================
+# Password hashing
+# ============================================================
 
 def test_hash_and_verify_roundtrip():
     h = auth.hash_password("hunter2secret")
@@ -33,7 +34,9 @@ def test_empty_password_rejected():
         auth.hash_password("")
 
 
-# ---------- sessions ----------
+# ============================================================
+# Session tokens
+# ============================================================
 
 def test_session_roundtrip():
     token = auth.create_session()
@@ -45,7 +48,9 @@ def test_session_rejects_garbage():
     assert not auth.verify_session("not-a-real-token")
 
 
-# ---------- is_public_path ----------
+# ============================================================
+# is_public_path
+# ============================================================
 
 def test_is_public_path_health():
     assert auth.is_public_path("/api/health")
@@ -69,7 +74,9 @@ def test_is_public_path_protected():
     assert not auth.is_public_path("/api/settings")
 
 
-# ---------- End-to-end via TestClient ----------
+# ============================================================
+# End-to-end via TestClient
+# ============================================================
 
 @pytest.fixture
 def client_with_fresh_auth(app_client):
@@ -151,10 +158,100 @@ def test_clearing_password_disables_auth(client_with_fresh_auth):
     client_with_fresh_auth.post("/api/settings", json={"password": "hunter2secret"})
     assert client_with_fresh_auth.get("/api/rules").status_code == 401
 
-    # Still-authenticated request to clear password (or log in first)
+    # Log in first, then clear
     client_with_fresh_auth.post("/api/auth/login", json={"password": "hunter2secret"})
     client_with_fresh_auth.post("/api/settings", json={"password": ""})
 
-    # Fresh client sees auth disabled
+    # Fresh request — auth disabled
     assert client_with_fresh_auth.get("/api/auth/status").json()["required"] is False
     assert client_with_fresh_auth.get("/api/rules").status_code == 200
+
+
+# ============================================================
+# Session secret persistence (Step 27)
+# ============================================================
+
+def test_session_secret_persists_across_load(app_client):
+    """Sessions must survive a settings reload."""
+    import settings as settings_mod
+
+    # Trigger a settings write by setting a password
+    app_client.post("/api/settings", json={"password": "hunter2secret"})
+
+    s1 = settings_mod.load_settings()
+    assert s1.session_secret
+    secret1 = s1.session_secret
+
+    # Reload from disk — secret should be identical
+    s2 = settings_mod.load_settings()
+    assert s2.session_secret == secret1
+
+    # Clean up
+    app_client.post("/api/auth/login", json={"password": "hunter2secret"})
+    app_client.post("/api/settings", json={"password": ""})
+
+
+def test_password_change_rotates_secret(app_client):
+    """Changing the password must invalidate existing sessions."""
+    import settings as settings_mod
+
+    app_client.post("/api/settings", json={"password": "hunter2secret"})
+    secret1 = settings_mod.load_settings().session_secret
+
+    app_client.post("/api/auth/login", json={"password": "hunter2secret"})
+    app_client.post("/api/settings", json={"password": "newpassword123"})
+    secret2 = settings_mod.load_settings().session_secret
+
+    assert secret1 != secret2
+
+    # Old cookie no longer works — log out and confirm
+    app_client.post("/api/auth/logout")
+    r = app_client.get("/api/rules")
+    assert r.status_code == 401
+
+    # New password works
+    r = app_client.post("/api/auth/login", json={"password": "newpassword123"})
+    assert r.status_code == 200
+
+    # Clean up
+    app_client.post("/api/settings", json={"password": ""})
+
+
+def test_secret_never_leaks_to_frontend(app_client):
+    """/api/settings must not expose session_secret or password_hash."""
+    app_client.post("/api/settings", json={"password": "hunter2secret"})
+    app_client.post("/api/auth/login", json={"password": "hunter2secret"})
+
+    r = app_client.get("/api/settings")
+    s = r.json()["settings"]
+    assert s["password_hash"] == ""
+    assert s["session_secret"] == ""
+    assert s["has_password"] is True
+
+    # Clean up
+    app_client.post("/api/settings", json={"password": ""})
+
+
+def test_secret_persists_between_test_client_sessions(tmp_path):
+    """A fresh TestClient should accept a cookie issued by an earlier one."""
+    from fastapi.testclient import TestClient
+    import app as app_module
+
+    cookie_value = None
+
+    # First client — log in
+    with TestClient(app_module.app) as c1:
+        c1.post("/api/settings", json={"password": "hunter2secret"})
+        r = c1.post("/api/auth/login", json={"password": "hunter2secret"})
+        assert r.status_code == 200
+        cookie_value = c1.cookies.get("fo_session")
+        assert cookie_value
+
+    # Second client — reuse the cookie
+    with TestClient(app_module.app) as c2:
+        c2.cookies.set("fo_session", cookie_value)
+        r = c2.get("/api/rules")
+        assert r.status_code == 200
+
+        # Clean up
+        c2.post("/api/settings", json={"password": ""})

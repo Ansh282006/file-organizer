@@ -55,6 +55,26 @@
       <span id="summary-counts"></span>
     </section>
 
+    <section id="preview-controls" class="preview-controls hidden">
+      <div class="preview-filter-row">
+        <input
+          id="filter-text"
+          type="text"
+          class="preview-filter-input"
+          placeholder="Filter by filename or destination…"
+          spellcheck="false"
+        />
+        <select id="filter-category" class="preview-filter-select">
+          <option value="">All categories</option>
+        </select>
+        <label class="preview-filter-checkbox">
+          <input type="checkbox" id="filter-renamed" />
+          Only renamed
+        </label>
+        <span id="filter-count" class="preview-filter-count"></span>
+      </div>
+    </section>
+
     <section id="preview" class="preview hidden">
       <table>
         <thead>

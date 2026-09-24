@@ -127,6 +127,12 @@ const els = {
   modeHint:      $("#mode-hint"),
   modeBtns:      document.querySelectorAll(".mode-btn"),
   wsStatus:      $("#ws-status"),
+  // preview filters
+  previewControls: $("#preview-controls"),
+  filterText:      $("#filter-text"),
+  filterCategory:  $("#filter-category"),
+  filterRenamed:   $("#filter-renamed"),
+  filterCount:     $("#filter-count"),
   // watch
   watchBadge:    $("#watch-badge"),
   watchStartBtn: $("#watch-start-btn"),
@@ -214,6 +220,14 @@ let folderRules = [];
 let largeFilesResult = null;
 let largeFilesSelected = new Set();
 
+// Preview filter state
+let currentPlan = null;
+let currentFilter = {
+  text: "",
+  category: "",
+  renamedOnly: false,
+};
+
 let ws = null;
 let wsReconnectTimer = null;
 let wsConnected = false;
@@ -234,9 +248,11 @@ function hideStatus() { els.status.classList.add("hidden"); }
 
 function hideResults() {
   els.summary.classList.add("hidden");
+  els.previewControls.classList.add("hidden");
   els.preview.classList.add("hidden");
   els.actions.classList.add("hidden");
   els.previewBody.innerHTML = "";
+  currentPlan = null;
 }
 
 function escapeHtml(s) {
@@ -541,9 +557,11 @@ async function undoLatest() {
   await undoLog(latestUndoableLog);
 }
 
-// ---------- plan rendering ----------
+// ---------- plan rendering + filters ----------
 
 function renderPlan(plan) {
+  currentPlan = plan;
+
   els.summaryFolder.textContent = plan.folder;
   const parts = [`${plan.total} file${plan.total === 1 ? "" : "s"}`];
   if (plan.renamed > 0) parts.push(`${plan.renamed} renamed`);
@@ -554,7 +572,19 @@ function renderPlan(plan) {
   els.preview.classList.remove("hidden");
   els.actions.classList.remove("hidden");
 
+  // Populate the category dropdown from the plan
+  const categories = Array.from(new Set(plan.items.map(it => it.category))).sort();
+  els.filterCategory.innerHTML = `<option value="">All categories</option>` +
+    categories.map(c => `<option value="${escapeHtml(c)}">${escapeHtml(c)}</option>`).join("");
+
+  // Reset filters on each new scan
+  currentFilter = { text: "", category: "", renamedOnly: false };
+  els.filterText.value = "";
+  els.filterCategory.value = "";
+  els.filterRenamed.checked = false;
+
   if (plan.items.length === 0) {
+    els.previewControls.classList.add("hidden");
     els.previewBody.innerHTML = `
       <tr><td colspan="5" style="text-align:center; color:var(--muted); padding:24px;">
         Nothing to organize — folder is already clean.
@@ -563,9 +593,45 @@ function renderPlan(plan) {
     return;
   }
 
+  els.previewControls.classList.remove("hidden");
   els.organizeBtn.disabled = false;
+  applyFilters();
+}
 
-  const rows = plan.items.map(it => {
+function applyFilters() {
+  if (!currentPlan) return;
+
+  const total = currentPlan.items.length;
+  const text = currentFilter.text.trim().toLowerCase();
+  const category = currentFilter.category;
+  const renamedOnly = currentFilter.renamedOnly;
+
+  const visible = currentPlan.items.filter(it => {
+    if (renamedOnly && !it.renamed) return false;
+    if (category && it.category !== category) return false;
+    if (text) {
+      const haystack = (it.source_name + " " + it.destination_rel).toLowerCase();
+      if (!haystack.includes(text)) return false;
+    }
+    return true;
+  });
+
+  // Update count
+  if (visible.length === total) {
+    els.filterCount.textContent = `${total} file${total === 1 ? "" : "s"}`;
+  } else {
+    els.filterCount.textContent = `Showing ${visible.length} of ${total}`;
+  }
+
+  if (visible.length === 0) {
+    els.previewBody.innerHTML = `
+      <tr><td colspan="5" style="text-align:center; color:var(--muted); padding:24px;">
+        No files match the current filters.
+      </td></tr>`;
+    return;
+  }
+
+  const rows = visible.map(it => {
     const hasThumb = it.is_image || it.is_video;
     const badge = filetypeBadge(it.source_name);
     const cell = hasThumb
@@ -588,6 +654,21 @@ function renderPlan(plan) {
   });
   els.previewBody.innerHTML = rows.join("");
 }
+
+els.filterText.addEventListener("input", () => {
+  currentFilter.text = els.filterText.value;
+  applyFilters();
+});
+
+els.filterCategory.addEventListener("change", () => {
+  currentFilter.category = els.filterCategory.value;
+  applyFilters();
+});
+
+els.filterRenamed.addEventListener("change", () => {
+  currentFilter.renamedOnly = els.filterRenamed.checked;
+  applyFilters();
+});
 
 function filetypeBadge(filename) {
   const ext = (filename.split(".").pop() || "").toUpperCase();

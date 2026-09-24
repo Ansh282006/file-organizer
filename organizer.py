@@ -32,6 +32,7 @@ VALID_MODES = {MODE_EXTENSION, MODE_DATE}
 class Rule:
     name: str
     extensions: set[str]
+    size_split_mb: float | None = None
 
 
 @dataclass
@@ -65,17 +66,32 @@ def load_rules(path: Path | None = None) -> list[Rule]:
     raw = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
     rules: list[Rule] = []
     for name, cfg in raw.items():
+        if not isinstance(cfg, dict):
+            continue
         exts = {e.lower() for e in (cfg.get("extensions") or [])}
-        rules.append(Rule(name=name, extensions=exts))
+        split = cfg.get("size_split_mb")
+        try:
+            split_val = float(split) if split not in (None, "", 0) else None
+            if split_val is not None and split_val <= 0:
+                split_val = None
+        except (TypeError, ValueError):
+            split_val = None
+        rules.append(Rule(name=name, extensions=exts, size_split_mb=split_val))
     return rules
 
 
-def category_for(suffix: str, rules: list[Rule]) -> str:
+def rule_for(suffix: str, rules: list[Rule]) -> Rule | None:
+    """Return the first Rule matching a file extension, or None."""
     ext = suffix.lower()
     for rule in rules:
         if ext in rule.extensions:
-            return rule.name
-    return FALLBACK_CATEGORY
+            return rule
+    return None
+
+
+def category_for(suffix: str, rules: list[Rule]) -> str:
+    r = rule_for(suffix, rules)
+    return r.name if r else FALLBACK_CATEGORY
 
 
 def category_for_date(timestamp: float, date_format: str = DEFAULT_DATE_FORMAT) -> str:
@@ -148,6 +164,24 @@ def remove_category(name: str) -> None:
     _write_rules_raw(data)
 
 
+def set_size_split(category: str, mb: float | None) -> None:
+    """Set or clear the size split threshold for a category."""
+    data = _load_rules_raw()
+    if category not in data:
+        raise KeyError(f"Category not found: {category}")
+    if mb is None:
+        data[category].pop("size_split_mb", None)
+    else:
+        try:
+            v = float(mb)
+        except (TypeError, ValueError):
+            raise ValueError("size_split_mb must be a number")
+        if v <= 0:
+            raise ValueError("size_split_mb must be > 0")
+        data[category]["size_split_mb"] = v
+    _write_rules_raw(data)
+
+
 # ---------- helpers ----------
 
 def should_skip(
@@ -175,6 +209,18 @@ def _unique_name(dest: Path, taken: set[Path]) -> tuple[Path, bool]:
         if not candidate.exists() and candidate not in taken:
             return candidate, True
         counter += 1
+
+
+def _already_in_category(entry: Path, folder: Path, category: str) -> bool:
+    """True if the file's parent folder already matches the category (handles sub-paths)."""
+    try:
+        rel = entry.relative_to(folder)
+    except ValueError:
+        return False
+    parent_str = str(rel.parent).replace("\\", "/")
+    if parent_str == ".":
+        return False
+    return parent_str == category
 
 
 # ---------- scanning ----------
@@ -213,9 +259,21 @@ def scan(
                 continue
             category = category_for_date(mtime, date_format)
         else:
-            category = category_for(entry.suffix, rules)
+            rule = rule_for(entry.suffix, rules)
+            if rule is None:
+                category = FALLBACK_CATEGORY
+            else:
+                category = rule.name
+                if rule.size_split_mb:
+                    try:
+                        size_mb = entry.stat().st_size / (1024 * 1024)
+                    except OSError:
+                        plan.skipped.append(entry)
+                        continue
+                    bucket = "large" if size_mb >= rule.size_split_mb else "small"
+                    category = f"{category}/{bucket}"
 
-        if entry.parent.name == category:
+        if _already_in_category(entry, folder, category):
             plan.skipped.append(entry)
             continue
 

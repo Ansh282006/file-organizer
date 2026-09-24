@@ -31,11 +31,13 @@ class Settings:
     auth_enabled: bool = False
     password_hash: str = ""
     session_secret: str = ""
+    backup_enabled: bool = True
+    backup_interval_hours: int = 24
+    backup_keep_count: int = 30
 
     def to_dict(self, hide_secrets: bool = False) -> dict:
         data = asdict(self)
         if hide_secrets:
-            # Never leak secrets to the frontend
             data["password_hash"] = ""
             data["session_secret"] = ""
             data["has_password"] = bool(self.password_hash)
@@ -61,9 +63,11 @@ def load_settings(path: Path | None = None) -> Settings:
         auth_enabled=bool(raw.get("auth_enabled", False)),
         password_hash=str(raw.get("password_hash", "") or ""),
         session_secret=str(raw.get("session_secret", "") or ""),
+        backup_enabled=bool(raw.get("backup_enabled", True)),
+        backup_interval_hours=int(raw.get("backup_interval_hours", 24)),
+        backup_keep_count=int(raw.get("backup_keep_count", 30)),
     )
 
-    # Generate a session secret on first load
     if not s.session_secret:
         s.session_secret = secrets.token_urlsafe(32)
         try:
@@ -121,7 +125,6 @@ def update_settings(partial: dict, path: Path | None = None) -> Settings:
         if pw is None or pw == "":
             data["password_hash"] = ""
             data["auth_enabled"] = False
-            # Rotate the session secret on password removal so old sessions die
             data["session_secret"] = secrets.token_urlsafe(32)
         else:
             pw = str(pw)
@@ -130,8 +133,22 @@ def update_settings(partial: dict, path: Path | None = None) -> Settings:
             data["password_hash"] = hash_password(pw)
             if "auth_enabled" not in partial:
                 data["auth_enabled"] = True
-            # Rotate the secret on every password change → logs out all devices
             data["session_secret"] = secrets.token_urlsafe(32)
+
+    if "backup_enabled" in partial:
+        data["backup_enabled"] = bool(partial["backup_enabled"])
+
+    if "backup_interval_hours" in partial:
+        v = int(partial["backup_interval_hours"])
+        if v < 1:
+            raise ValueError("backup_interval_hours must be >= 1")
+        data["backup_interval_hours"] = v
+
+    if "backup_keep_count" in partial:
+        v = int(partial["backup_keep_count"])
+        if v < 1:
+            raise ValueError("backup_keep_count must be >= 1")
+        data["backup_keep_count"] = v
 
     updated = Settings(**data)
     save_settings(updated, path)

@@ -10,6 +10,7 @@ from pathlib import Path
 
 import yaml
 
+import config_backup
 import events
 import folder_rules as fr
 from organizer import (
@@ -250,3 +251,9 @@ class SchedulerService:
                 _run_one(s["id"])
             except Exception:
                 pass
+
+        # Every tick also checks if a config backup is due
+        try:
+            config_backup.run_scheduled_backup()
+        except Exception:
+            pass

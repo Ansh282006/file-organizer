@@ -11,6 +11,7 @@ from fastapi.responses import JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 import auth
+import config_backup
 import events
 import folder_rules as fr
 import video_thumbnails
@@ -29,6 +30,7 @@ from organizer import (
     remove_category,
     remove_extension,
     scan,
+    set_size_split,
     undo,
     Plan,
 )
@@ -46,7 +48,7 @@ from thumbnails import generate_thumbnail, is_image
 from trash import is_supported as trash_supported, trash_many
 from watcher import WatchManager
 
-app = FastAPI(title="File Organizer", version="1.3.0")
+app = FastAPI(title="File Organizer", version="1.5.0")
 
 STATIC_DIR = Path(__file__).parent / "static"
 watch_manager = WatchManager()
@@ -180,9 +182,7 @@ def api_scan(path: str = Query(...), mode: str | None = Query(None)):
 
 @app.get("/api/thumbnail")
 def api_thumbnail(path: str = Query(...)):
-    """Serve a thumbnail — image or video frame, whichever fits."""
     p = Path(path)
-
     try:
         if is_image(p):
             data = generate_thumbnail(p)
@@ -198,7 +198,6 @@ def api_thumbnail(path: str = Query(...)):
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"{type(e).__name__}: {e}")
-
     return Response(
         content=data,
         media_type="image/jpeg",
@@ -325,6 +324,70 @@ def api_config_reset():
     reset_all()
     events.publish("config_reset", {})
     return {"ok": True}
+
+
+# ---------- config backups ----------
+
+@app.get("/api/backups")
+def api_list_backups():
+    s = load_settings()
+    return {
+        "backups": config_backup.list_backups(),
+        "settings": {
+            "backup_enabled": s.backup_enabled,
+            "backup_interval_hours": s.backup_interval_hours,
+            "backup_keep_count": s.backup_keep_count,
+        },
+    }
+
+
+@app.post("/api/backups")
+def api_create_backup(payload: dict | None = None):
+    label = (payload or {}).get("label", "")
+    try:
+        meta = config_backup.create_backup(label=label)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"{type(e).__name__}: {e}")
+    events.publish("backup_created", meta)
+    return {"ok": True, "backup": meta}
+
+
+@app.post("/api/backups/{filename}/restore")
+def api_restore_backup(filename: str, payload: dict | None = None):
+    strategy = (payload or {}).get("strategy", "replace")
+    try:
+        applied = config_backup.restore_backup(filename, strategy=strategy)
+    except FileNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"{type(e).__name__}: {e}")
+    events.publish("config_imported", {"applied": applied})
+    return {"ok": True, "applied": applied}
+
+
+@app.delete("/api/backups/{filename}")
+def api_delete_backup(filename: str):
+    try:
+        config_backup.delete_backup(filename)
+    except FileNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    events.publish("backup_deleted", {"filename": filename})
+    return {"ok": True}
+
+
+@app.get("/api/backups/{filename}/download")
+def api_download_backup(filename: str):
+    safe = Path(filename).name
+    path = config_backup.BACKUP_DIR / safe
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="Backup not found")
+    return Response(
+        content=path.read_bytes(),
+        media_type="application/json",
+        headers={"Content-Disposition": f'attachment; filename="{safe}"'},
+    )
 
 
 # ---------- duplicates ----------
@@ -636,7 +699,13 @@ def api_watch_stop():
 @app.get("/api/rules")
 def api_rules():
     rules = load_rules()
-    return {r.name: sorted(r.extensions) for r in rules}
+    return {
+        r.name: {
+            "extensions": sorted(r.extensions),
+            "size_split_mb": r.size_split_mb,
+        }
+        for r in rules
+    }
 
 
 @app.post("/api/rules/add-extension")
@@ -691,6 +760,22 @@ def api_remove_category(payload: dict):
         remove_category(name)
     except KeyError as e:
         raise HTTPException(status_code=404, detail=str(e))
+    events.publish("rules_updated", {})
+    return {"ok": True}
+
+
+@app.post("/api/rules/set-size-split")
+def api_set_size_split(payload: dict):
+    category = payload.get("category")
+    if not category:
+        raise HTTPException(status_code=400, detail="Missing category")
+    mb = payload.get("size_split_mb")
+    try:
+        set_size_split(category, mb)
+    except KeyError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     events.publish("rules_updated", {})
     return {"ok": True}
 

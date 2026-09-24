@@ -1515,22 +1515,34 @@ function renderRules(rules) {
     return;
   }
 
-  els.rulesList.innerHTML = entries.map(([cat, exts]) => `
-    <div class="rules-row" data-category="${escapeHtml(cat)}">
-      <div class="rules-cat">${escapeHtml(cat)}</div>
-      <div class="rules-exts">
-        ${exts.map(e => `
-          <span class="ext-chip">
-            ${escapeHtml(e)}
-            <button class="chip-x" data-cat="${escapeHtml(cat)}" data-ext="${escapeHtml(e)}" title="Remove">×</button>
+  els.rulesList.innerHTML = entries.map(([cat, cfg]) => {
+    const exts = Array.isArray(cfg) ? cfg : (cfg.extensions || []);
+    const split = Array.isArray(cfg) ? null : cfg.size_split_mb;
+    const splitValue = split != null ? split : "";
+
+    return `
+      <div class="rules-row" data-category="${escapeHtml(cat)}">
+        <div class="rules-cat">${escapeHtml(cat)}</div>
+        <div class="rules-exts">
+          ${exts.map(e => `
+            <span class="ext-chip">
+              ${escapeHtml(e)}
+              <button class="chip-x" data-cat="${escapeHtml(cat)}" data-ext="${escapeHtml(e)}" title="Remove">×</button>
+            </span>
+          `).join("")}
+          <input type="text" class="ext-input" placeholder="+ ext" spellcheck="false" />
+          <button class="ext-add-btn secondary">Add</button>
+          <button class="cat-del-btn danger">Delete category</button>
+          <span class="size-split-cell" title="Files above this size go to {category}/large/, others to {category}/small/. Leave blank for no split.">
+            Size split:
+            <input type="number" class="size-split-input" data-cat="${escapeHtml(cat)}" min="1" step="1"
+                   value="${escapeHtml(splitValue)}" placeholder="—" />
+            MB
           </span>
-        `).join("")}
-        <input type="text" class="ext-input" placeholder="+ ext" spellcheck="false" />
-        <button class="ext-add-btn secondary">Add</button>
-        <button class="cat-del-btn danger">Delete category</button>
+        </div>
       </div>
-    </div>
-  `).join("");
+    `;
+  }).join("");
 }
 
 async function apiPost(url, body) {
@@ -1577,7 +1589,33 @@ els.rulesList.addEventListener("click", async (e) => {
   }
 });
 
+els.rulesList.addEventListener("change", async (e) => {
+  const input = e.target.closest(".size-split-input");
+  if (!input) return;
+  const category = input.dataset.cat;
+  const raw = input.value.trim();
+  const mb = raw === "" ? null : parseFloat(raw);
+  if (mb !== null && (isNaN(mb) || mb <= 0)) {
+    showStatus("Size split must be a positive number.", "error");
+    return;
+  }
+  try {
+    await apiPost("/api/rules/set-size-split", { category, size_split_mb: mb });
+    showStatus(mb === null
+      ? `Size split cleared for ${category}`
+      : `${category} will split at ${mb} MB`, "success");
+    await loadRules();
+  } catch (err) {
+    showStatus(`Size split: ${err.message}`, "error");
+  }
+});
+
 els.rulesList.addEventListener("keydown", async (e) => {
+  if (e.key === "Enter" && e.target.classList.contains("size-split-input")) {
+    e.preventDefault();
+    e.target.blur();
+    return;
+  }
   if (e.key !== "Enter" || !e.target.classList.contains("ext-input")) return;
   e.preventDefault();
   e.target.closest(".rules-row").querySelector(".ext-add-btn").click();

@@ -841,6 +841,34 @@ tr.renamed td.destination::after { content: " *"; }
 .rules-add-category { display: flex; gap: 10px; margin-top: 20px; }
 .rules-add-category input { flex: 1; }
 
+/* Size-split control */
+
+.size-split-cell {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: 12px;
+  padding-left: 12px;
+  border-left: 1px solid var(--border);
+  font-size: 12px;
+  color: var(--muted);
+  font-family: ui-monospace, Consolas, monospace;
+}
+
+.size-split-cell input {
+  width: 60px;
+  padding: 5px 8px;
+  font-size: 12px;
+  font-family: ui-monospace, Consolas, monospace;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  color: var(--text);
+  border-radius: 6px;
+  outline: none;
+}
+
+.size-split-cell input:focus { border-color: var(--accent); }
+
 /* Folder rules panel */
 
 .folder-rules-panel {

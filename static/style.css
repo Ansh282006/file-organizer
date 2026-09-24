@@ -234,6 +234,33 @@ td.category { font-family: inherit; font-size: 13px; color: var(--muted); width:
 tr.renamed td.destination { color: var(--warn); }
 tr.renamed td.destination::after { content: " *"; }
 
+/* Sortable headers */
+
+th.sortable {
+  cursor: pointer;
+  user-select: none;
+  transition: color 0.15s;
+}
+
+th.sortable:hover { color: var(--text); }
+
+th.sortable .sort-ind {
+  display: inline-block;
+  width: 12px;
+  margin-left: 4px;
+  font-size: 10px;
+  color: var(--accent);
+  vertical-align: middle;
+}
+
+th.sortable.sort-asc .sort-ind::after { content: "▲"; }
+th.sortable.sort-desc .sort-ind::after { content: "▼"; }
+
+th.sortable.sort-asc,
+th.sortable.sort-desc {
+  color: var(--text);
+}
+
 /* Actions */
 
 .actions { display: flex; gap: 10px; margin-top: 20px; }

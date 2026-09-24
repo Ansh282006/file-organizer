@@ -185,6 +185,12 @@ const els = {
   exportConfigBtn:  $("#export-config-btn"),
   importFileInput:  $("#import-file-input"),
   resetConfigBtn:   $("#reset-config-btn"),
+  // backups
+  createBackupBtn:  $("#create-backup-btn"),
+  backupsBody:      $("#backups-body"),
+  backupsTable:     $("#backups-table"),
+  backupsEmpty:     $("#backups-empty"),
+  backupsCount:     $("#backups-count"),
   // folder rules
   toggleFolderRules: $("#toggle-folder-rules"),
   folderRulesBody:   $("#folder-rules-body"),
@@ -307,6 +313,10 @@ function handleWsEvent(msg) {
     case "trash":
       if (data.trashed) showStatus(`Trashed ${data.trashed} file(s)`, "success");
       break;
+    case "backup_created":
+    case "backup_deleted":
+      loadBackups();
+      break;
     case "schedule_run":
       loadSchedules(); loadLogs();
       showStatus(`Scheduled run — ${data.moved} file(s) from ${data.folder}`, "success");
@@ -335,6 +345,7 @@ function handleWsEvent(msg) {
       if (rulesVisible) loadRules();
       if (folderRulesVisible) loadFolderRules();
       loadSchedules();
+      loadBackups();
       break;
   }
 }
@@ -1368,6 +1379,123 @@ els.importFileInput.addEventListener("change", async (e) => {
 
 els.resetConfigBtn.addEventListener("click", resetConfig);
 
+// ---------- config backups ----------
+
+async function loadBackups() {
+  try {
+    const res = await fetch("/api/backups");
+    const data = await res.json();
+    renderBackups(data.backups || []);
+  } catch {}
+}
+
+function renderBackups(backups) {
+  els.backupsCount.textContent = backups.length
+    ? `${backups.length} snapshot${backups.length === 1 ? "" : "s"}`
+    : "";
+
+  if (backups.length === 0) {
+    els.backupsTable.classList.add("hidden");
+    els.backupsEmpty.classList.remove("hidden");
+    return;
+  }
+
+  els.backupsEmpty.classList.add("hidden");
+  els.backupsTable.classList.remove("hidden");
+
+  els.backupsBody.innerHTML = backups.map(b => {
+    const sizeKb = (b.size_bytes / 1024).toFixed(1);
+    return `
+      <tr data-filename="${escapeHtml(b.filename)}">
+        <td>${escapeHtml(b.created_at)}</td>
+        <td>${sizeKb} KB</td>
+        <td class="filename-cell" title="${escapeHtml(b.filename)}">${escapeHtml(b.filename)}</td>
+        <td class="actions-cell">
+          <button class="primary backup-restore" data-file="${escapeHtml(b.filename)}">Restore</button>
+          <button class="secondary backup-download" data-file="${escapeHtml(b.filename)}">Download</button>
+          <button class="danger backup-delete" data-file="${escapeHtml(b.filename)}">Delete</button>
+        </td>
+      </tr>
+    `;
+  }).join("");
+}
+
+async function createBackup() {
+  els.createBackupBtn.disabled = true;
+  els.createBackupBtn.textContent = "Creating...";
+  try {
+    const res = await fetch("/api/backups", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({}),
+    });
+    const data = await res.json();
+    if (!res.ok) { showStatus(data.detail || `Error ${res.status}`, "error"); return; }
+    showStatus(`Backup created: ${data.backup.filename}`, "success");
+    await loadBackups();
+  } catch (err) {
+    showStatus(`Network error: ${err.message}`, "error");
+  } finally {
+    els.createBackupBtn.disabled = false;
+    els.createBackupBtn.textContent = "Create backup now";
+  }
+}
+
+async function restoreBackup(filename) {
+  const confirmed = confirm(
+    `Restore configuration from:\n${filename}\n\n` +
+    `This will replace your current rules, settings, schedules, and folder rules.`
+  );
+  if (!confirmed) return;
+
+  try {
+    const res = await fetch(`/api/backups/${encodeURIComponent(filename)}/restore`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ strategy: "replace" }),
+    });
+    const data = await res.json();
+    if (!res.ok) { showStatus(data.detail || `Error ${res.status}`, "error"); return; }
+    showStatus("Backup restored.", "success");
+
+    await loadSettings();
+    if (rulesVisible) await loadRules();
+    if (folderRulesVisible) await loadFolderRules();
+    await loadSchedules();
+    await checkAuth();
+    updateLogoutVisibility();
+  } catch (err) {
+    showStatus(`Restore failed: ${err.message}`, "error");
+  }
+}
+
+async function deleteBackup(filename) {
+  if (!confirm(`Delete backup:\n${filename}?`)) return;
+  try {
+    const res = await fetch(`/api/backups/${encodeURIComponent(filename)}`, { method: "DELETE" });
+    const data = await res.json();
+    if (!res.ok) { showStatus(data.detail || `Error ${res.status}`, "error"); return; }
+    await loadBackups();
+  } catch (err) {
+    showStatus(`Delete failed: ${err.message}`, "error");
+  }
+}
+
+function downloadBackup(filename) {
+  window.location.href = `/api/backups/${encodeURIComponent(filename)}/download`;
+}
+
+els.createBackupBtn.addEventListener("click", createBackup);
+
+els.backupsBody.addEventListener("click", async (e) => {
+  const btn = e.target.closest("button");
+  if (!btn) return;
+  const filename = btn.dataset.file;
+  if (btn.classList.contains("backup-restore")) return restoreBackup(filename);
+  if (btn.classList.contains("backup-delete"))  return deleteBackup(filename);
+  if (btn.classList.contains("backup-download")) return downloadBackup(filename);
+});
+
 // ---------- rules editor (global) ----------
 
 async function loadRules() {
@@ -1716,6 +1844,7 @@ async function boot() {
 
   loadLogs();
   loadSchedules();
+  loadBackups();
   refreshWatch();
 
   connectWs();

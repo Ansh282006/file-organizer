@@ -278,6 +278,34 @@
       </div>
     </section>
 
+    <section class="backups-panel">
+      <div class="backups-header">
+        <h2>Backups</h2>
+        <span id="backups-count" class="backups-count"></span>
+      </div>
+      <p class="backups-hint">
+        Automatic snapshots of your rules, settings, schedules, and folder rules.
+        Restore any snapshot to roll back changes. Nothing about your files is included.
+      </p>
+
+      <div class="backups-controls">
+        <button id="create-backup-btn" class="primary">Create backup now</button>
+      </div>
+
+      <div id="backups-empty" class="backups-empty">No backups yet.</div>
+      <table id="backups-table" class="backups-table hidden">
+        <thead>
+          <tr>
+            <th>When</th>
+            <th>Size</th>
+            <th>Filename</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody id="backups-body"></tbody>
+      </table>
+    </section>
+
     <section id="rules-panel" class="rules-panel">
       <div class="rules-header">
         <h2>Rules</h2>

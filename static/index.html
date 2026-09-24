@@ -78,7 +78,13 @@
     <section id="preview" class="preview hidden">
       <table>
         <thead>
-          <tr><th></th><th>File</th><th></th><th>Destination</th><th>Group</th></tr>
+          <tr>
+            <th></th>
+            <th class="sortable" data-sort="source_name">File<span class="sort-ind"></span></th>
+            <th></th>
+            <th class="sortable" data-sort="destination_rel">Destination<span class="sort-ind"></span></th>
+            <th class="sortable" data-sort="category">Group<span class="sort-ind"></span></th>
+          </tr>
         </thead>
         <tbody id="preview-body"></tbody>
       </table>

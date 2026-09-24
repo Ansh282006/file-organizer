@@ -169,6 +169,7 @@ const els = {
   toggleSettings:   $("#toggle-settings"),
   settingsBody:     $("#settings-body"),
   setDefaultMode:   $("#set-default-mode"),
+  setCollisionStyle:$("#set-collision-style"),
   setDateFormat:    $("#set-date-format"),
   skipNamesChips:   $("#skip-names-chips"),
   skipPrefixesChips:$("#skip-prefixes-chips"),
@@ -1138,6 +1139,7 @@ function renderSettings() {
   if (!currentSettings) return;
 
   els.setDefaultMode.value = currentSettings.default_mode || "extension";
+  els.setCollisionStyle.value = currentSettings.collision_style || "numeric";
 
   const currentFmt = currentSettings.date_format;
   const known = dateFormatOptions.some(o => o.value === currentFmt);
@@ -1202,6 +1204,10 @@ function flashSaved() {
 
 els.setDefaultMode.addEventListener("change", () => {
   saveSettings({ default_mode: els.setDefaultMode.value });
+});
+
+els.setCollisionStyle.addEventListener("change", () => {
+  saveSettings({ collision_style: els.setCollisionStyle.value });
 });
 
 els.setDateFormat.addEventListener("change", () => {

@@ -127,6 +127,12 @@ const els = {
   modeHint:      $("#mode-hint"),
   modeBtns:      document.querySelectorAll(".mode-btn"),
   wsStatus:      $("#ws-status"),
+  // preview filters
+  previewControls: $("#preview-controls"),
+  filterText:      $("#filter-text"),
+  filterCategory:  $("#filter-category"),
+  filterRenamed:   $("#filter-renamed"),
+  filterCount:     $("#filter-count"),
   // watch
   watchBadge:    $("#watch-badge"),
   watchStartBtn: $("#watch-start-btn"),
@@ -169,6 +175,7 @@ const els = {
   toggleSettings:   $("#toggle-settings"),
   settingsBody:     $("#settings-body"),
   setDefaultMode:   $("#set-default-mode"),
+  setCollisionStyle:$("#set-collision-style"),
   setDateFormat:    $("#set-date-format"),
   skipNamesChips:   $("#skip-names-chips"),
   skipPrefixesChips:$("#skip-prefixes-chips"),
@@ -185,6 +192,12 @@ const els = {
   exportConfigBtn:  $("#export-config-btn"),
   importFileInput:  $("#import-file-input"),
   resetConfigBtn:   $("#reset-config-btn"),
+  // backups
+  createBackupBtn:  $("#create-backup-btn"),
+  backupsBody:      $("#backups-body"),
+  backupsTable:     $("#backups-table"),
+  backupsEmpty:     $("#backups-empty"),
+  backupsCount:     $("#backups-count"),
   // folder rules
   toggleFolderRules: $("#toggle-folder-rules"),
   folderRulesBody:   $("#folder-rules-body"),
@@ -207,6 +220,14 @@ let folderRules = [];
 let largeFilesResult = null;
 let largeFilesSelected = new Set();
 
+// Preview filter state
+let currentPlan = null;
+let currentFilter = {
+  text: "",
+  category: "",
+  renamedOnly: false,
+};
+
 let ws = null;
 let wsReconnectTimer = null;
 let wsConnected = false;
@@ -227,9 +248,11 @@ function hideStatus() { els.status.classList.add("hidden"); }
 
 function hideResults() {
   els.summary.classList.add("hidden");
+  els.previewControls.classList.add("hidden");
   els.preview.classList.add("hidden");
   els.actions.classList.add("hidden");
   els.previewBody.innerHTML = "";
+  currentPlan = null;
 }
 
 function escapeHtml(s) {
@@ -307,6 +330,10 @@ function handleWsEvent(msg) {
     case "trash":
       if (data.trashed) showStatus(`Trashed ${data.trashed} file(s)`, "success");
       break;
+    case "backup_created":
+    case "backup_deleted":
+      loadBackups();
+      break;
     case "schedule_run":
       loadSchedules(); loadLogs();
       showStatus(`Scheduled run — ${data.moved} file(s) from ${data.folder}`, "success");
@@ -335,6 +362,7 @@ function handleWsEvent(msg) {
       if (rulesVisible) loadRules();
       if (folderRulesVisible) loadFolderRules();
       loadSchedules();
+      loadBackups();
       break;
   }
 }
@@ -529,9 +557,11 @@ async function undoLatest() {
   await undoLog(latestUndoableLog);
 }
 
-// ---------- plan rendering ----------
+// ---------- plan rendering + filters ----------
 
 function renderPlan(plan) {
+  currentPlan = plan;
+
   els.summaryFolder.textContent = plan.folder;
   const parts = [`${plan.total} file${plan.total === 1 ? "" : "s"}`];
   if (plan.renamed > 0) parts.push(`${plan.renamed} renamed`);
@@ -542,7 +572,19 @@ function renderPlan(plan) {
   els.preview.classList.remove("hidden");
   els.actions.classList.remove("hidden");
 
+  // Populate the category dropdown from the plan
+  const categories = Array.from(new Set(plan.items.map(it => it.category))).sort();
+  els.filterCategory.innerHTML = `<option value="">All categories</option>` +
+    categories.map(c => `<option value="${escapeHtml(c)}">${escapeHtml(c)}</option>`).join("");
+
+  // Reset filters on each new scan
+  currentFilter = { text: "", category: "", renamedOnly: false };
+  els.filterText.value = "";
+  els.filterCategory.value = "";
+  els.filterRenamed.checked = false;
+
   if (plan.items.length === 0) {
+    els.previewControls.classList.add("hidden");
     els.previewBody.innerHTML = `
       <tr><td colspan="5" style="text-align:center; color:var(--muted); padding:24px;">
         Nothing to organize — folder is already clean.
@@ -551,9 +593,45 @@ function renderPlan(plan) {
     return;
   }
 
+  els.previewControls.classList.remove("hidden");
   els.organizeBtn.disabled = false;
+  applyFilters();
+}
 
-  const rows = plan.items.map(it => {
+function applyFilters() {
+  if (!currentPlan) return;
+
+  const total = currentPlan.items.length;
+  const text = currentFilter.text.trim().toLowerCase();
+  const category = currentFilter.category;
+  const renamedOnly = currentFilter.renamedOnly;
+
+  const visible = currentPlan.items.filter(it => {
+    if (renamedOnly && !it.renamed) return false;
+    if (category && it.category !== category) return false;
+    if (text) {
+      const haystack = (it.source_name + " " + it.destination_rel).toLowerCase();
+      if (!haystack.includes(text)) return false;
+    }
+    return true;
+  });
+
+  // Update count
+  if (visible.length === total) {
+    els.filterCount.textContent = `${total} file${total === 1 ? "" : "s"}`;
+  } else {
+    els.filterCount.textContent = `Showing ${visible.length} of ${total}`;
+  }
+
+  if (visible.length === 0) {
+    els.previewBody.innerHTML = `
+      <tr><td colspan="5" style="text-align:center; color:var(--muted); padding:24px;">
+        No files match the current filters.
+      </td></tr>`;
+    return;
+  }
+
+  const rows = visible.map(it => {
     const hasThumb = it.is_image || it.is_video;
     const badge = filetypeBadge(it.source_name);
     const cell = hasThumb
@@ -576,6 +654,21 @@ function renderPlan(plan) {
   });
   els.previewBody.innerHTML = rows.join("");
 }
+
+els.filterText.addEventListener("input", () => {
+  currentFilter.text = els.filterText.value;
+  applyFilters();
+});
+
+els.filterCategory.addEventListener("change", () => {
+  currentFilter.category = els.filterCategory.value;
+  applyFilters();
+});
+
+els.filterRenamed.addEventListener("change", () => {
+  currentFilter.renamedOnly = els.filterRenamed.checked;
+  applyFilters();
+});
 
 function filetypeBadge(filename) {
   const ext = (filename.split(".").pop() || "").toUpperCase();
@@ -1127,6 +1220,7 @@ function renderSettings() {
   if (!currentSettings) return;
 
   els.setDefaultMode.value = currentSettings.default_mode || "extension";
+  els.setCollisionStyle.value = currentSettings.collision_style || "numeric";
 
   const currentFmt = currentSettings.date_format;
   const known = dateFormatOptions.some(o => o.value === currentFmt);
@@ -1191,6 +1285,10 @@ function flashSaved() {
 
 els.setDefaultMode.addEventListener("change", () => {
   saveSettings({ default_mode: els.setDefaultMode.value });
+});
+
+els.setCollisionStyle.addEventListener("change", () => {
+  saveSettings({ collision_style: els.setCollisionStyle.value });
 });
 
 els.setDateFormat.addEventListener("change", () => {
@@ -1368,6 +1466,123 @@ els.importFileInput.addEventListener("change", async (e) => {
 
 els.resetConfigBtn.addEventListener("click", resetConfig);
 
+// ---------- config backups ----------
+
+async function loadBackups() {
+  try {
+    const res = await fetch("/api/backups");
+    const data = await res.json();
+    renderBackups(data.backups || []);
+  } catch {}
+}
+
+function renderBackups(backups) {
+  els.backupsCount.textContent = backups.length
+    ? `${backups.length} snapshot${backups.length === 1 ? "" : "s"}`
+    : "";
+
+  if (backups.length === 0) {
+    els.backupsTable.classList.add("hidden");
+    els.backupsEmpty.classList.remove("hidden");
+    return;
+  }
+
+  els.backupsEmpty.classList.add("hidden");
+  els.backupsTable.classList.remove("hidden");
+
+  els.backupsBody.innerHTML = backups.map(b => {
+    const sizeKb = (b.size_bytes / 1024).toFixed(1);
+    return `
+      <tr data-filename="${escapeHtml(b.filename)}">
+        <td>${escapeHtml(b.created_at)}</td>
+        <td>${sizeKb} KB</td>
+        <td class="filename-cell" title="${escapeHtml(b.filename)}">${escapeHtml(b.filename)}</td>
+        <td class="actions-cell">
+          <button class="primary backup-restore" data-file="${escapeHtml(b.filename)}">Restore</button>
+          <button class="secondary backup-download" data-file="${escapeHtml(b.filename)}">Download</button>
+          <button class="danger backup-delete" data-file="${escapeHtml(b.filename)}">Delete</button>
+        </td>
+      </tr>
+    `;
+  }).join("");
+}
+
+async function createBackup() {
+  els.createBackupBtn.disabled = true;
+  els.createBackupBtn.textContent = "Creating...";
+  try {
+    const res = await fetch("/api/backups", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({}),
+    });
+    const data = await res.json();
+    if (!res.ok) { showStatus(data.detail || `Error ${res.status}`, "error"); return; }
+    showStatus(`Backup created: ${data.backup.filename}`, "success");
+    await loadBackups();
+  } catch (err) {
+    showStatus(`Network error: ${err.message}`, "error");
+  } finally {
+    els.createBackupBtn.disabled = false;
+    els.createBackupBtn.textContent = "Create backup now";
+  }
+}
+
+async function restoreBackup(filename) {
+  const confirmed = confirm(
+    `Restore configuration from:\n${filename}\n\n` +
+    `This will replace your current rules, settings, schedules, and folder rules.`
+  );
+  if (!confirmed) return;
+
+  try {
+    const res = await fetch(`/api/backups/${encodeURIComponent(filename)}/restore`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ strategy: "replace" }),
+    });
+    const data = await res.json();
+    if (!res.ok) { showStatus(data.detail || `Error ${res.status}`, "error"); return; }
+    showStatus("Backup restored.", "success");
+
+    await loadSettings();
+    if (rulesVisible) await loadRules();
+    if (folderRulesVisible) await loadFolderRules();
+    await loadSchedules();
+    await checkAuth();
+    updateLogoutVisibility();
+  } catch (err) {
+    showStatus(`Restore failed: ${err.message}`, "error");
+  }
+}
+
+async function deleteBackup(filename) {
+  if (!confirm(`Delete backup:\n${filename}?`)) return;
+  try {
+    const res = await fetch(`/api/backups/${encodeURIComponent(filename)}`, { method: "DELETE" });
+    const data = await res.json();
+    if (!res.ok) { showStatus(data.detail || `Error ${res.status}`, "error"); return; }
+    await loadBackups();
+  } catch (err) {
+    showStatus(`Delete failed: ${err.message}`, "error");
+  }
+}
+
+function downloadBackup(filename) {
+  window.location.href = `/api/backups/${encodeURIComponent(filename)}/download`;
+}
+
+els.createBackupBtn.addEventListener("click", createBackup);
+
+els.backupsBody.addEventListener("click", async (e) => {
+  const btn = e.target.closest("button");
+  if (!btn) return;
+  const filename = btn.dataset.file;
+  if (btn.classList.contains("backup-restore")) return restoreBackup(filename);
+  if (btn.classList.contains("backup-delete"))  return deleteBackup(filename);
+  if (btn.classList.contains("backup-download")) return downloadBackup(filename);
+});
+
 // ---------- rules editor (global) ----------
 
 async function loadRules() {
@@ -1387,22 +1602,34 @@ function renderRules(rules) {
     return;
   }
 
-  els.rulesList.innerHTML = entries.map(([cat, exts]) => `
-    <div class="rules-row" data-category="${escapeHtml(cat)}">
-      <div class="rules-cat">${escapeHtml(cat)}</div>
-      <div class="rules-exts">
-        ${exts.map(e => `
-          <span class="ext-chip">
-            ${escapeHtml(e)}
-            <button class="chip-x" data-cat="${escapeHtml(cat)}" data-ext="${escapeHtml(e)}" title="Remove">×</button>
+  els.rulesList.innerHTML = entries.map(([cat, cfg]) => {
+    const exts = Array.isArray(cfg) ? cfg : (cfg.extensions || []);
+    const split = Array.isArray(cfg) ? null : cfg.size_split_mb;
+    const splitValue = split != null ? split : "";
+
+    return `
+      <div class="rules-row" data-category="${escapeHtml(cat)}">
+        <div class="rules-cat">${escapeHtml(cat)}</div>
+        <div class="rules-exts">
+          ${exts.map(e => `
+            <span class="ext-chip">
+              ${escapeHtml(e)}
+              <button class="chip-x" data-cat="${escapeHtml(cat)}" data-ext="${escapeHtml(e)}" title="Remove">×</button>
+            </span>
+          `).join("")}
+          <input type="text" class="ext-input" placeholder="+ ext" spellcheck="false" />
+          <button class="ext-add-btn secondary">Add</button>
+          <button class="cat-del-btn danger">Delete category</button>
+          <span class="size-split-cell" title="Files above this size go to {category}/large/, others to {category}/small/. Leave blank for no split.">
+            Size split:
+            <input type="number" class="size-split-input" data-cat="${escapeHtml(cat)}" min="1" step="1"
+                   value="${escapeHtml(splitValue)}" placeholder="—" />
+            MB
           </span>
-        `).join("")}
-        <input type="text" class="ext-input" placeholder="+ ext" spellcheck="false" />
-        <button class="ext-add-btn secondary">Add</button>
-        <button class="cat-del-btn danger">Delete category</button>
+        </div>
       </div>
-    </div>
-  `).join("");
+    `;
+  }).join("");
 }
 
 async function apiPost(url, body) {
@@ -1449,7 +1676,33 @@ els.rulesList.addEventListener("click", async (e) => {
   }
 });
 
+els.rulesList.addEventListener("change", async (e) => {
+  const input = e.target.closest(".size-split-input");
+  if (!input) return;
+  const category = input.dataset.cat;
+  const raw = input.value.trim();
+  const mb = raw === "" ? null : parseFloat(raw);
+  if (mb !== null && (isNaN(mb) || mb <= 0)) {
+    showStatus("Size split must be a positive number.", "error");
+    return;
+  }
+  try {
+    await apiPost("/api/rules/set-size-split", { category, size_split_mb: mb });
+    showStatus(mb === null
+      ? `Size split cleared for ${category}`
+      : `${category} will split at ${mb} MB`, "success");
+    await loadRules();
+  } catch (err) {
+    showStatus(`Size split: ${err.message}`, "error");
+  }
+});
+
 els.rulesList.addEventListener("keydown", async (e) => {
+  if (e.key === "Enter" && e.target.classList.contains("size-split-input")) {
+    e.preventDefault();
+    e.target.blur();
+    return;
+  }
   if (e.key !== "Enter" || !e.target.classList.contains("ext-input")) return;
   e.preventDefault();
   e.target.closest(".rules-row").querySelector(".ext-add-btn").click();
@@ -1716,6 +1969,7 @@ async function boot() {
 
   loadLogs();
   loadSchedules();
+  loadBackups();
   refreshWatch();
 
   connectWs();

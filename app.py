@@ -13,6 +13,7 @@ from fastapi.staticfiles import StaticFiles
 import auth
 import events
 import folder_rules as fr
+import video_thumbnails
 from config_io import export_bundle, import_bundle, reset_all
 from duplicates import find_duplicates, plan_quarantine
 from largefiles import find_large_files, plan_quarantine as plan_large_quarantine
@@ -45,7 +46,7 @@ from thumbnails import generate_thumbnail, is_image
 from trash import is_supported as trash_supported, trash_many
 from watcher import WatchManager
 
-app = FastAPI(title="File Organizer", version="1.2.0")
+app = FastAPI(title="File Organizer", version="1.3.0")
 
 STATIC_DIR = Path(__file__).parent / "static"
 watch_manager = WatchManager()
@@ -73,19 +74,12 @@ async def _shutdown():
 @app.middleware("http")
 async def _auth_middleware(request: Request, call_next):
     path = request.url.path
-
     if auth.is_public_path(path):
         return await call_next(request)
-
     if not auth.is_auth_required():
         return await call_next(request)
-
     if not auth.is_authenticated(dict(request.cookies)):
-        return JSONResponse(
-            {"detail": "Authentication required"},
-            status_code=401,
-        )
-
+        return JSONResponse({"detail": "Authentication required"}, status_code=401)
     return await call_next(request)
 
 
@@ -95,10 +89,7 @@ async def _auth_middleware(request: Request, call_next):
 def api_auth_status(request: Request):
     required = auth.is_auth_required()
     authed = auth.is_authenticated(dict(request.cookies))
-    return {
-        "required": required,
-        "authenticated": authed or not required,
-    }
+    return {"required": required, "authenticated": authed or not required}
 
 
 @app.post("/api/auth/login")
@@ -106,11 +97,9 @@ def api_auth_login(payload: dict, response: Response):
     s = load_settings()
     if not s.auth_enabled or not s.password_hash:
         return {"ok": True, "message": "Auth not enabled"}
-
     password = payload.get("password", "")
     if not auth.verify_password(password, s.password_hash):
         raise HTTPException(status_code=401, detail="Incorrect password")
-
     token = auth.create_session()
     response.set_cookie(
         key=auth.COOKIE_NAME,
@@ -151,11 +140,10 @@ def _scan_with_settings(path: str, mode: str | None = None) -> Plan:
 
 @app.websocket("/ws")
 async def ws_endpoint(websocket: WebSocket):
-    # WebSockets bypass HTTP middleware; check auth explicitly
     if auth.is_auth_required():
         cookies = websocket.cookies or {}
         if not auth.is_authenticated(cookies):
-            await websocket.close(code=1008)  # policy violation
+            await websocket.close(code=1008)
             return
     await events.handle_connection(websocket)
 
@@ -169,6 +157,7 @@ def api_health():
         "scheduler_running": scheduler_service.running,
         "trash_supported": trash_supported(),
         "ws_connections": events.connection_count(),
+        "video_thumbnails_supported": video_thumbnails.is_supported(),
     }
 
 
@@ -191,17 +180,25 @@ def api_scan(path: str = Query(...), mode: str | None = Query(None)):
 
 @app.get("/api/thumbnail")
 def api_thumbnail(path: str = Query(...)):
+    """Serve a thumbnail — image or video frame, whichever fits."""
     p = Path(path)
-    if not is_image(p):
-        raise HTTPException(status_code=400, detail="Not a supported image")
+
     try:
-        data = generate_thumbnail(p)
+        if is_image(p):
+            data = generate_thumbnail(p)
+        elif video_thumbnails.is_video(p) and video_thumbnails.is_supported():
+            data = video_thumbnails.generate_video_thumbnail(p)
+        else:
+            raise HTTPException(status_code=400, detail="Not a supported thumbnail type")
     except FileNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"{type(e).__name__}: {e}")
+
     return Response(
         content=data,
         media_type="image/jpeg",
@@ -714,6 +711,7 @@ def plan_to_json(plan: Plan) -> dict:
                 "category": it.category,
                 "renamed": it.renamed,
                 "is_image": is_image(it.source),
+                "is_video": video_thumbnails.is_supported() and video_thumbnails.is_video(it.source),
             }
             for it in plan.items
         ],

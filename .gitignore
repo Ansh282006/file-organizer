@@ -11,3 +11,6 @@ test-folder/
 .idea/
 .vscode/
 schedules.yaml
+build/
+dist/
+*.spec.bak

@@ -2,17 +2,16 @@
 
 - Password is stored as PBKDF2-HMAC-SHA256(salt, password) hex in settings.
 - Sessions are signed cookies (itsdangerous), verified per request.
-- Session store is in-memory only — restart the app to invalidate all sessions.
+- The signing secret is persisted in settings.yaml, so sessions survive
+  server restarts. It rotates automatically when the password changes.
 """
 
 from __future__ import annotations
 
 import hashlib
 import hmac
-import os
 import secrets
 import time
-from pathlib import Path
 
 from itsdangerous import BadSignature, URLSafeTimedSerializer
 
@@ -54,12 +53,18 @@ def verify_password(password: str, stored: str) -> bool:
 # ---------- session tokens ----------
 
 def _secret() -> str:
-    """Stable secret for signing cookies — regenerated each process start.
-    Persisting this would let sessions survive a restart, but that adds
-    a settings field. For now: restart = everyone logged out."""
-    if not hasattr(_secret, "_cached"):
-        _secret._cached = secrets.token_urlsafe(32)  # type: ignore[attr-defined]
-    return _secret._cached  # type: ignore[attr-defined]
+    """Stable secret for signing cookies — persisted in settings.yaml."""
+    from settings import load_settings
+    s = load_settings()
+    if not s.session_secret:
+        # Should not happen — load_settings guarantees a value — but be safe
+        s.session_secret = secrets.token_urlsafe(32)
+        from settings import save_settings
+        try:
+            save_settings(s)
+        except OSError:
+            pass
+    return s.session_secret
 
 
 def _serializer() -> URLSafeTimedSerializer:
@@ -76,7 +81,9 @@ def verify_session(token: str) -> bool:
     try:
         _serializer().loads(token, max_age=SESSION_MAX_AGE)
         return True
-    except (BadSignature, Exception):
+    except BadSignature:
+        return False
+    except Exception:
         return False
 
 
@@ -95,7 +102,6 @@ def is_public_path(path: str) -> bool:
         return True
     if path.startswith("/api/auth/"):
         return True
-    # Static assets and the root — the frontend needs to load the login UI
     if not path.startswith("/api/"):
         return True
     return False

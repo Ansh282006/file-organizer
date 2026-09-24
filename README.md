@@ -49,3 +49,20 @@ Move the whole folder (exe + data/) to back up or relocate.
 
 ~50–80 MB depending on platform. Most of it is the Python runtime and
 bundled dependencies (Pillow, watchdog, uvicorn).
+
+## Video thumbnails (optional)
+
+Video files show a real thumbnail in the preview table when **ffmpeg** is installed.
+
+Install once:
+
+- **Windows:** `winget install --id Gyan.FFmpeg -e`
+- **macOS:** `brew install ffmpeg`
+- **Linux:** `sudo apt install ffmpeg`
+
+If ffmpeg isn't on PATH, video files show a plain `MP4` / `MOV` / `MKV` badge
+instead. The app works fine either way — nothing breaks.
+
+The frame is extracted at ~2 seconds in (skipping fade-ins), resized to 96×96,
+and cached in memory. Extracted frames are cached keyed by `(path, mtime)`, so
+a file's thumbnail regenerates automatically after it changes.
